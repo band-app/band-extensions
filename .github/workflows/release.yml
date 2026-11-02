@@ -1,0 +1,60 @@
+name: Release
+
+# A tag <ext>-v<version> (for example gridcraft-v0.7.0-1) builds the extension and publishes a
+# GitHub release with the tarball and its .sha256. Run by hand with an extension name, it builds the
+# same files as a dry run: an artifact, no release.
+on:
+  push:
+    tags: ["*-v*"]
+  workflow_dispatch:
+    inputs:
+      extension:
+        description: Extension to build (a folder under extensions/)
+        required: true
+        default: gridcraft
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pick the extension
+        id: pick
+        env:
+          EVENT: ${{ github.event_name }}
+          TAG: ${{ github.ref_name }}
+          INPUT: ${{ inputs.extension }}
+        run: |
+          if [ "$EVENT" = push ]; then
+            read -r ext version < <(scripts/check-tag.sh "$TAG")
+          else
+            ext="$INPUT"
+            [ -f "extensions/$ext/band-extension.json" ] || { echo "no extensions/$ext/band-extension.json" >&2; exit 1; }
+            version="$(jq -r .version "extensions/$ext/band-extension.json")"
+          fi
+          echo "ext=$ext" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/setup
+      - name: Package
+        run: scripts/package.sh ${{ steps.pick.outputs.ext }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pick.outputs.ext }}-${{ steps.pick.outputs.version }}
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+          if-no-files-found: error
+      - name: Create the release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXT: ${{ steps.pick.outputs.ext }}
+          VERSION: ${{ steps.pick.outputs.version }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --verify-tag \
+            --title "$EXT $VERSION" \
+            --notes "Unpack into <BAND_HOME>/extensions/ and run \`band extensions reload\`. Check the download with the .sha256 file." \
+            "dist/$EXT-$VERSION.tar.gz" "dist/$EXT-$VERSION.tar.gz.sha256"

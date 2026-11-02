@@ -1,10 +1,11 @@
-// Protocol test for the Band extension build in dist/web, in headless Chrome.
-//   PLAYWRIGHT=<path to playwright-core> node scripts/verify.mjs [outdir]
+// Protocol test for the GridCraft extension build, in headless Chrome.
+//   PLAYWRIGHT=<path to playwright-core> node extensions/gridcraft/verify.mjs [outdir]
+// Tests extensions/gridcraft/dist/web (with tools.json, written by scripts/package.sh), or DIST.
 //
 // The test page (origin A) frames the build from another server (origin B) in
 // <iframe sandbox="allow-scripts">, as Band does, so the frame has a null origin. The page plays
 // Band: it sends band:hello with a MessagePort, then init, and speaks the editor protocol on the
-// port. Checks S1 to S6 of .am/BRIEF.md; S7 and S8 are shell commands (see the README).
+// port. Checks scenarios S1 to S6 (init, save, reload, csv, mcp, forged messages); the rest are shell commands (see the README).
 import { createServer } from "node:http";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { extname, join } from "node:path";
@@ -12,9 +13,9 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT ?? "playwright-core");
-const root = join(import.meta.dirname, "..");
-const dist = join(root, "dist/web");
-const out = process.argv[2] ?? join(root, ".am/evidence");
+const root = join(import.meta.dirname, "../..");
+const dist = process.env.DIST ?? join(import.meta.dirname, "dist/web");
+const out = process.argv[2] ?? join(root, "dist/verify");
 mkdirSync(out, { recursive: true });
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".wasm": "application/wasm", ".json": "application/json" };
 

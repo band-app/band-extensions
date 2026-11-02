@@ -1,13 +1,13 @@
 [package]
-name = "gridcraft-webmcp"
-description = "A GridCraft web build that serves GridCraft's MCP tools to a host page over postMessage"
+name = "gridcraft-band"
+description = "GridCraft as a Band editor extension: the web build, Band's editor protocol and GridCraft's MCP tools"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
 
 [[bin]]
-name = "gridcraft-webmcp"
+name = "gridcraft-band"
 path = "src/main.rs"
 
 [[bin]]
@@ -15,6 +15,7 @@ name = "tools-json"
 path = "src/tools_json.rs"
 
 [dependencies]
+band-editor = { workspace = true }
 gridcraft-engine = { workspace = true }
 gridcraft-mcp = { workspace = true }
 gridcraft-ui-egui = { workspace = true }
@@ -28,4 +29,4 @@ rfd = { workspace = true }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
-web-sys = { version = "0.3", features = ["Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement", "HtmlAnchorElement", "HtmlIFrameElement", "Blob", "BlobPropertyBag", "Url", "Location", "CssStyleDeclaration", "Clipboard", "ClipboardItem", "Navigator", "MessageEvent", "MessagePort", "UrlSearchParams"] }
+web-sys = { version = "0.3", features = ["Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement", "HtmlAnchorElement", "HtmlIFrameElement", "Blob", "BlobPropertyBag", "Url", "Location", "CssStyleDeclaration", "Clipboard", "ClipboardItem", "Navigator"] }

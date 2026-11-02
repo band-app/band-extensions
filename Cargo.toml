@@ -1,14 +1,15 @@
 [workspace]
 resolver = "3"
-members = ["app"]
+members = ["crates/band-editor", "extensions/gridcraft/app"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 
-# GridCraft is consumed only as git dependencies at one pinned rev; see README.md before changing it.
+# GridCraft is consumed only as git dependencies at one pinned rev; see extensions/gridcraft/README.md before changing it.
 [workspace.dependencies]
+band-editor = { path = "crates/band-editor" }
 gridcraft-engine = { git = "https://github.com/storytold/gridcraft.git", rev = "e6b6b349708a", package = "gridcraft-engine" }
 gridcraft-mcp = { git = "https://github.com/storytold/gridcraft.git", rev = "e6b6b349708a", package = "gridcraft-mcp" }
 gridcraft-ui-egui = { git = "https://github.com/storytold/gridcraft.git", rev = "e6b6b349708a", package = "gridcraft-ui-egui" }

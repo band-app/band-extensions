@@ -1,7 +1,8 @@
 // Copied from storytold/gridcraft apps/gridcraft-web/src/web.rs at rev e6b6b349708a (MIT OR Apache-2.0,
 // see LICENSE-MIT and LICENSE-APACHE at the repo root).
-// Changes: wrapped the app in Rc<RefCell<..>>, added the mcp::McpHost frame hook and the band::Bridge
-// editor port; marked with 'wrapper:'. Also removed a blank line after a doc comment (clippy).
+// Changes: wrapped the app in Rc<RefCell<..>>, replaced the `?host=parent` bridge with the Band editor
+// port (band_editor::Bridge driving editor::GridcraftEditor); marked with 'wrapper:'. Also removed a
+// blank line after a doc comment (clippy).
 
 //! The browser shell: web `Services`, drag-and-drop, and the eframe web runner.
 
@@ -33,12 +34,8 @@ pub fn start() {
         {
             create.instance_descriptor.backends = eframe::wgpu::Backends::GL;
         }
-        // `?host=parent`: a same-origin page framing GridCraft (such as a Nextcloud app) opens
-        // workbooks in it and stores what it saves (`host`).
-        let bridge = if query_param("host").as_deref() == Some("parent") { crate::host::Bridge::new() } else { None };
-        let app_bridge = bridge.clone();
-        // wrapper: any other framed page is a Band editor tab, which talks over a MessagePort.
-        let band = if bridge.is_none() && query_param("host").is_none() { crate::band::Bridge::listen() } else { None };
+        // wrapper: a framed page is a Band editor tab, which talks over a MessagePort.
+        let band = band_editor::Bridge::listen();
         let app_band = band.clone();
         let result = eframe::WebRunner::new()
             .start(
@@ -47,20 +44,15 @@ pub fn start() {
                 Box::new(move |cc| {
                     let inbox: Inbox = Inbox::default();
                     let mut session = Session::new();
-                    // In host mode the parent sends the workbook to edit; no sample meanwhile.
-                    let q = if app_bridge.is_some() || app_band.is_some() { String::new() } else { query() };
+                    // Framed by Band, the file to edit arrives from Band; no sample meanwhile.
+                    let q = if app_band.is_some() { String::new() } else { query() };
                     if let Some(name) = q.split(['?', '&']).find_map(|kv| kv.strip_prefix("sample=")) {
                         let _ = session.execute("file.new", serde_json::json!({"sample": name}));
                     } else if q.contains("sample") {
                         let _ = session.execute("file.new", serde_json::json!({"sample": "sales"}));
                     }
                     let mut services = services(inbox.clone(), cc.egui_ctx.clone());
-                    if let Some(bridge) = &app_bridge {
-                        bridge.connect(&mut services, inbox.clone(), cc.egui_ctx.clone());
-                    }
-                    if let Some(band) = &app_band {
-                        band.connect(&mut services, inbox.clone(), cc.egui_ctx.clone());
-                    }
+                    let want_save = app_band.as_ref().map(|_| crate::editor::GridcraftEditor::route_save(&mut services));
                     let mut app = SheetApp::new(session, services);
                     app.ui.system_theme = true;
                     // Follow the browser's language, except a CJK one: the web build has no system
@@ -73,30 +65,17 @@ pub fn start() {
                         app.ui.language = browser;
                     }
                     SheetApp::setup_context_for_language(&cc.egui_ctx, false, app.ui.language);
-                    if app_bridge.is_some()
-                        && let Some(author) = query_param("author")
-                    {
-                        crate::host::Bridge::set_author(&mut app, &author);
-                    }
-                    // wrapper: the MCP server shares the app with the frame loop, and listens
-                    // before the parent is told the app is ready.
+                    // wrapper: the editor shares the app with the frame loop.
                     let app = Rc::new(RefCell::new(app));
-                    let transport = match (&app_bridge, &app_band) {
-                        (_, Some(band)) => Some(band.transport()),
-                        (Some(_), None) => crate::mcp::Transport::parent_window(cc.egui_ctx.clone()),
-                        (None, None) => None,
-                    };
-                    let mcp = transport.map(|t| crate::mcp::McpHost::new(app.clone(), cc.egui_ctx.clone(), t));
-                    if let Some(bridge) = &app_bridge {
-                        bridge.post_ready();
-                    }
-                    Ok(Box::new(WebShell { app, inbox, bridge: app_bridge, band: app_band, mcp }))
+                    let band = app_band.zip(want_save).map(|(bridge, want_save)| {
+                        let ctx = cc.egui_ctx.clone();
+                        bridge.set_repaint(move || ctx.request_repaint());
+                        (bridge, crate::editor::GridcraftEditor::new(app.clone(), inbox.clone(), cc.egui_ctx.clone(), want_save))
+                    });
+                    Ok(Box::new(WebShell { app, inbox, band }))
                 }),
             )
             .await;
-        if let (Err(e), Some(bridge)) = (&result, &bridge) {
-            bridge.post_failed(&format!("{e:?}"));
-        }
         if let Some(el) = document.get_element_by_id(LOADING_ID) {
             match result {
                 Ok(()) => el.remove(),
@@ -110,18 +89,11 @@ fn query() -> String {
     web_sys::window().and_then(|w| w.location().search().ok()).unwrap_or_default()
 }
 
-fn query_param(key: &str) -> Option<String> {
-    web_sys::UrlSearchParams::new_with_str(&query()).ok()?.get(key)
-}
-
 struct WebShell {
     app: Rc<RefCell<SheetApp>>,
-    /// wrapper: the MCP server answering `gridcraft:mcp` (host mode).
-    mcp: Option<crate::mcp::McpHost>,
     inbox: Inbox,
-    bridge: Option<crate::host::Bridge>,
-    /// wrapper: Band's editor protocol (framed without `?host=parent`).
-    band: Option<crate::band::Bridge>,
+    /// wrapper: Band's editor protocol (framed pages only).
+    band: Option<(band_editor::Bridge, crate::editor::GridcraftEditor)>,
 }
 
 impl eframe::App for WebShell {
@@ -149,19 +121,10 @@ impl eframe::App for WebShell {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        {
-            let mut app = self.app.borrow_mut();
-            app.ui(ui);
-            if let Some(bridge) = &self.bridge {
-                bridge.sync(&mut app);
-            }
-            if let Some(band) = &self.band {
-                band.sync(&mut app);
-            }
-        }
-        // wrapper: the MCP server borrows the app itself, so it runs once this borrow is dropped.
-        if let Some(mcp) = &mut self.mcp {
-            mcp.frame(ui.ctx());
+        self.app.borrow_mut().ui(ui);
+        // wrapper: the editor borrows the app itself, so it runs once the borrow above is dropped.
+        if let Some((bridge, editor)) = &mut self.band {
+            bridge.sync(editor);
         }
     }
 }

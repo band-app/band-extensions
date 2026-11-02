@@ -1,0 +1,15 @@
+[package]
+name = "band-editor"
+description = "The Band side of an ArtCraft editor extension: Band's editor protocol over a MessagePort and tools.json generation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+serde_json = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = ["Window", "MessageEvent", "MessagePort", "console"] }
