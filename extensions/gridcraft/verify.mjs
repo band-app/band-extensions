@@ -5,7 +5,7 @@
 // The test page (origin A) frames the build from another server (origin B) in
 // <iframe sandbox="allow-scripts">, as Band does, so the frame has a null origin. The page plays
 // Band: it sends band:hello with a MessagePort, then init, and speaks the editor protocol on the
-// port. Checks scenarios S1 to S6 (init, save, reload, csv, mcp, forged messages); the rest are shell commands (see the README).
+// port. Checks scenarios S1 to S6 (init, save, reload, csv, mcp, forged messages).
 import { createServer } from "node:http";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { extname, join } from "node:path";

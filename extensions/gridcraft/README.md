@@ -31,6 +31,10 @@ A frame scrolled out of view or in a background tab stops drawing, and MCP reque
 - The root `rustfmt.toml` repeats GridCraft's formatting settings, which the copied files follow.
 - The root `Cargo.lock` started as GridCraft's lock at that rev, so egui, wgpu and the rest resolve to the versions GridCraft tests. `[profile.release]` is repeated in the root `Cargo.toml` because Cargo ignores a dependency's profile.
 
+## Dropped from the spike
+
+`app/host.html`, `app/src/host.rs`, `scripts/verify-host.mjs` and the `?host=parent` same-origin path are gone. They only served the earlier postMessage spike, and nothing in the Band extension uses them.
+
 ## Upgrading the pinned rev
 
 1. Change `rev` for the three `gridcraft-*` entries in the root `Cargo.toml`.

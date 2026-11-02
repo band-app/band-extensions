@@ -23,12 +23,6 @@ band extensions list
 
 Replace `~/.band` with your `BAND_HOME` if you changed it. The `curl | tar` form also works: `curl -fsSL <asset url> | tar -xz -C ~/.band/extensions`.
 
-While this repository is private, `curl` gets a 404. Download with the GitHub CLI and a token that can read the repository instead:
-
-```sh
-gh release download "gridcraft-v$VERSION" --repo band-app/craft-extensions --pattern "gridcraft-$VERSION.tar.gz*"
-```
-
 Tags are per extension (`<extension>-v<version>`), so extensions release on their own schedule.
 
 ## Build and install from source
