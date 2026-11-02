@@ -1,0 +1,19 @@
+{
+  "id": "gridcraft",
+  "name": "GridCraft",
+  "version": "0.7.0-1",
+  "extensionApi": 1,
+  "contributes": {
+    "fileEditors": [
+      {
+        "id": "sheet",
+        "label": "GridCraft",
+        "selector": ["*.xlsx", "*.csv"],
+        "default": true,
+        "entry": "index.html",
+        "binary": true,
+        "tools": "tools.json"
+      }
+    ]
+  }
+}

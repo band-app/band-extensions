@@ -1,4 +1,4 @@
-//! MCP over the host bridge (`gridcraft:mcp`): GridCraft's own MCP server (`gridcraft-mcp`, the
+//! MCP over the host bridge (`gridcraft:mcp`) or Band's editor port (`mcp`): GridCraft's own MCP server (`gridcraft-mcp`, the
 //! one behind `gridcraft-cli mcp`) answering the framing page, so the page lists and calls the
 //! same tools as the CLI.
 //!
@@ -72,21 +72,19 @@ struct PendingShot {
     requested: bool,
 }
 
-pub struct McpHost {
-    app: Rc<RefCell<SheetApp>>,
-    ctx: egui::Context,
-    server: Server,
-    parent: web_sys::Window,
-    origin: String,
+/// Where MCP messages come from and go back to: the framing page's `gridcraft:mcp` messages
+/// (`?host=parent`), or the `mcp` messages on Band's editor port (`band`).
+pub struct Transport {
     /// Messages (JSON text) received since the last frame.
-    inbox: Rc<RefCell<Vec<String>>>,
-    shots: Vec<PendingShot>,
-    next_token: u64,
+    pub inbox: Rc<RefCell<Vec<String>>>,
+    /// Sends one JSON-RPC message back to the other side.
+    pub reply: Box<dyn Fn(&JsValue)>,
 }
 
-impl McpHost {
-    /// `None` when the page isn't framed. Starts listening for `gridcraft:mcp` messages.
-    pub fn new(app: Rc<RefCell<SheetApp>>, ctx: egui::Context) -> Option<Self> {
+impl Transport {
+    /// `None` when the page isn't framed. Starts listening for `gridcraft:mcp` messages from the
+    /// parent window on the page's own origin.
+    pub fn parent_window(ctx: egui::Context) -> Option<Self> {
         let window = web_sys::window()?;
         let parent = window.parent().ok().flatten()?;
         if js_sys::Object::is(&parent, &window) {
@@ -95,7 +93,7 @@ impl McpHost {
         let origin = window.location().origin().ok()?;
         let inbox: Rc<RefCell<Vec<String>>> = Rc::default();
         let on_message = {
-            let (parent, origin, inbox, ctx) = (parent.clone(), origin.clone(), inbox.clone(), ctx.clone());
+            let (parent, origin, inbox) = (parent.clone(), origin.clone(), inbox.clone());
             Closure::<dyn FnMut(web_sys::MessageEvent)>::new(move |event: web_sys::MessageEvent| {
                 if event.origin() != origin || !event.source().is_some_and(|s| js_sys::Object::is(&s, &parent)) {
                     return;
@@ -104,9 +102,7 @@ impl McpHost {
                 if js_sys::Reflect::get(&data, &"type".into()).ok().and_then(|t| t.as_string()).as_deref() != Some("gridcraft:mcp") {
                     return;
                 }
-                let text =
-                    js_sys::Reflect::get(&data, &"message".into()).ok().and_then(|m| js_sys::JSON::stringify(&m).ok()).and_then(|s| s.as_string());
-                if let Some(text) = text {
+                if let Some(text) = message_text(&data) {
                     inbox.borrow_mut().push(text);
                     ctx.request_repaint();
                 }
@@ -115,28 +111,45 @@ impl McpHost {
         window.add_event_listener_with_callback("message", on_message.as_ref().unchecked_ref()).ok()?;
         // The listener lives as long as the page.
         on_message.forget();
-        Some(Self {
-            server: Server::new(Box::new(AppBackend { app: app.clone(), ctx: ctx.clone() })),
-            app,
-            ctx,
-            parent,
-            origin,
-            inbox,
-            shots: Vec::new(),
-            next_token: 0,
-        })
+        let reply = Box::new(move |message: &JsValue| {
+            let envelope = js_sys::Object::new();
+            let set = |key: &str, value: &JsValue| js_sys::Reflect::set(&envelope, &JsValue::from_str(key), value).is_ok();
+            if set("type", &"gridcraft:mcp".into()) && set("message", message) {
+                let _ = parent.post_message(&envelope, &origin);
+            }
+        });
+        Some(Self { inbox, reply })
+    }
+}
+
+/// The `message` field of an envelope as JSON text.
+pub fn message_text(envelope: &JsValue) -> Option<String> {
+    js_sys::Reflect::get(envelope, &"message".into()).ok().and_then(|m| js_sys::JSON::stringify(&m).ok()).and_then(|s| s.as_string())
+}
+
+pub struct McpHost {
+    app: Rc<RefCell<SheetApp>>,
+    server: Server,
+    transport: Transport,
+    shots: Vec<PendingShot>,
+    next_token: u64,
+}
+
+impl McpHost {
+    pub fn new(app: Rc<RefCell<SheetApp>>, ctx: egui::Context, transport: Transport) -> Self {
+        Self { server: Server::new(Box::new(AppBackend { app: app.clone(), ctx })), app, transport, shots: Vec::new(), next_token: 0 }
     }
 
     /// Run once per frame, after the app's own borrow is dropped: answers the queued messages and
     /// advances the pending screenshots.
     pub fn frame(&mut self, ctx: &egui::Context) {
-        let lines = std::mem::take(&mut *self.inbox.borrow_mut());
+        let lines = std::mem::take(&mut *self.transport.inbox.borrow_mut());
         for line in lines {
             if let Some(id) = tool_call(&line, "screenshot") {
                 self.next_token += 1;
                 self.shots.push(PendingShot { id, token: self.next_token, frames: 0, requested: false });
             } else if let Some(id) = tool_call(&line, "save_workbook") {
-                let reply = self.save_workbook(&id);
+                let reply = self.save_workbook(&id, ctx);
                 self.post(&reply);
             } else if let Some(reply) = self.server.handle_line(&line) {
                 self.post(&reply);
@@ -148,9 +161,9 @@ impl McpHost {
     }
 
     /// Hands the workbook to the page as `.xlsx` bytes; the `tools/call` response for `id`.
-    fn save_workbook(&mut self, id: &Value) -> String {
+    fn save_workbook(&mut self, id: &Value, ctx: &egui::Context) -> String {
         let outcome = match self.app.try_borrow_mut() {
-            Ok(mut app) => match control::handle(&mut app, &self.ctx, "engine.execute", &json!({"command": "file.saveAs", "params": {}})) {
+            Ok(mut app) => match control::handle(&mut app, ctx, "engine.execute", &json!({"command": "file.saveAs", "params": {}})) {
                 Outcome::Done(reply) if reply.get("ok").and_then(Value::as_bool) == Some(true) => Ok(()),
                 Outcome::Done(reply) => Err(reply.get("error").and_then(Value::as_str).unwrap_or("failed").to_string()),
                 Outcome::Screenshot { .. } => Err("unexpected screenshot request".to_string()),
@@ -206,13 +219,10 @@ impl McpHost {
         }
     }
 
-    /// Posts one JSON-RPC message (JSON text) to the parent as `gridcraft:mcp`.
+    /// Sends one JSON-RPC message (JSON text) to the other side.
     fn post(&self, json: &str) {
-        let Ok(message) = js_sys::JSON::parse(json) else { return };
-        let envelope = js_sys::Object::new();
-        let set = |key: &str, value: JsValue| js_sys::Reflect::set(&envelope, &JsValue::from_str(key), &value).is_ok();
-        if set("type", "gridcraft:mcp".into()) && set("message", message) {
-            let _ = self.parent.post_message(&envelope, &self.origin);
+        if let Ok(message) = js_sys::JSON::parse(json) {
+            (self.transport.reply)(&message);
         }
     }
 }
