@@ -188,6 +188,8 @@ impl Bridge {
         for _ in 0..app.session.documents().len() {
             let _ = app.session.execute("file.close", json!({"force": true}));
         }
+        // A `saved` that arrives after this reload belongs to the old workbook; drop the snapshots.
+        self.0.sent.borrow_mut().clear();
         let format = self.0.format.borrow().clone();
         self.open(format!("Book.{format}"), bytes);
     }
