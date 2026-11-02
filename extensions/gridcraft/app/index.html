@@ -3,18 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-  <title>GridCraft (WebMCP)</title>
+  <title>GridCraft</title>
   <script>
     // Band sends band:hello when the frame loads, before the wasm has compiled. Keep the port
-    // until the app asks for it (app/src/band.rs applies the same checks to later messages).
+    // until the app asks for it (crates/band-editor applies the same checks to later messages).
     addEventListener("message", (e) => {
       if (!window.bandHelloPort && e.source === parent && e.data && e.data.type === "band:hello" && e.data.extensionApi === 1 && e.ports[0]) {
         window.bandHelloPort = e.ports[0];
       }
     });
   </script>
-  <link data-trunk rel="copy-file" href="host.html" />
-  <link data-trunk rel="rust" data-bin="gridcraft-webmcp" data-wasm-opt="z" data-weak-refs />
+    <link data-trunk rel="rust" data-bin="gridcraft-band" data-wasm-opt="z" data-weak-refs />
   <style>
     html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #f3f3f3; }
     #gridcraft_canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }

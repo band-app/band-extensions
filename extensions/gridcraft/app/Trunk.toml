@@ -1,4 +1,4 @@
-# Build with: trunk build --release   (from app/, or `trunk build --release app/index.html` from the root)
+# Build with: trunk build --release   (from this directory). scripts/package.sh does this and packs the result.
 [build]
 target = "index.html"
 dist = "../dist/web"

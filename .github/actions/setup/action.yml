@@ -1,0 +1,31 @@
+name: Set up the build
+description: Rust (the channel in rust-toolchain.toml), the cargo cache, trunk, wasm-bindgen and Node
+
+runs:
+  using: composite
+  steps:
+    - name: Install Rust
+      shell: bash
+      run: |
+        channel="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)"
+        rustup toolchain install "$channel" --profile minimal -c rustfmt -c clippy -t wasm32-unknown-unknown
+        rustup default "$channel"
+    - name: Read the wasm-bindgen version from Cargo.lock
+      id: wasm-bindgen
+      shell: bash
+      run: echo "version=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"/\1/p')" >> "$GITHUB_OUTPUT"
+    - name: Cache cargo and build output
+      uses: Swatinem/rust-cache@v2
+      with:
+        # The wasm target and the native target (tools-json) share one cache per extension job.
+        shared-key: build
+        cache-targets: true
+    # trunk 0.21.14 is the version the build was tested with. wasm-bindgen-cli must equal the
+    # wasm-bindgen crate in Cargo.lock, so it follows the lock file.
+    - name: Install trunk and wasm-bindgen-cli
+      uses: taiki-e/install-action@v2
+      with:
+        tool: trunk@0.21.14,wasm-bindgen@${{ steps.wasm-bindgen.outputs.version }}
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
