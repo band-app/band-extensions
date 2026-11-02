@@ -1,6 +1,31 @@
 # gridcraft-webmcp
 
-A web build of [GridCraft](https://github.com/storytold/gridcraft) that serves GridCraft's own MCP tools to a host page over `postMessage`, so a browser tab can expose them as WebMCP tools. GridCraft's crates are git dependencies pinned at rev `e6b6b349708a`. Nothing in GridCraft is edited, patched or vendored. This is a spike, not a product.
+A web build of [GridCraft](https://github.com/storytold/gridcraft) that runs as a [Band](https://github.com/amirilovic/band) extension: Band frames it in `<iframe sandbox="allow-scripts">` and speaks its editor protocol over a `MessagePort`. The same build also serves GridCraft's own MCP tools to a same-origin host page over `postMessage` (`host.html`, `?host=parent`). GridCraft's crates are git dependencies pinned at rev `e6b6b349708a`. Nothing in GridCraft is edited, patched or vendored.
+
+## Install into Band
+
+```sh
+scripts/install.sh <BAND_HOME>
+```
+
+The script runs the release build, writes `tools.json`, and copies the build to `<BAND_HOME>/extensions/gridcraft/` with `band-extension.json`, the licenses and `NOTICE`. The wasm and the JS also get `.gz` copies, and `.br` copies when `brotli` is installed. Then run `band extensions reload`. `SKIP_BUILD=1` reuses `dist/web`.
+
+The extension opens `*.xlsx` and `*.csv`. Saving writes the format the file was opened in.
+
+`tools.json` is `{ "tools": [...] }`, the result of `tools/list` from the same `gridcraft_mcp::Server` the web build runs. `app/src/tools_json.rs` prints it with a backend that answers nothing, so no browser is needed. It adds `"agent": false` to `save_workbook` and `open_workbook`, so Band leaves them out of the agent's tools.
+
+## Editor protocol
+
+`app/src/band.rs` implements Band's extension API 1:
+
+- `index.html` keeps the port from the first `band:hello` (from `window.parent`, `extensionApi: 1`, with a port). Band sends it when the frame loads, before the wasm has compiled, so the bridge could not listen in time. The Rust side takes that port, ignores every other window message, and speaks only on it.
+- `init { file }` opens the workbook from bytes through GridCraft's own open path, then the page sends `ready`.
+- `dirty { dirty }` follows unsaved changes. `requestSave`, and File > Save or Cmd+S inside GridCraft, send `save { bytes }`. `saved` marks the workbook as sent saved, so edits made since stay unsaved. `saveFailed` keeps it dirty.
+- `reload { bytes }` closes the open workbook and opens the new bytes. `theme` is ignored.
+- `mcp { message }` goes to `app/src/mcp.rs`, and the answer goes back as `mcp { message }` with the same id, image content included.
+- Other downloads (PDF export, Save As to another format) have nowhere to go and are dropped with a log line.
+
+A frame scrolled out of view or in a background tab stops drawing, and `mcp.rs` answers on the frame loop, so such a tab answers when it is shown again.
 
 ## Build and run
 
@@ -14,9 +39,14 @@ The output is `dist/web`. Serve it from any static server (wasm needs `applicati
 - `index.html?sample=sales` for the stock app.
 - `host.html` for the host page, which frames `index.html?host=parent` and registers the tools.
 
-A cold build takes about 6 minutes, an incremental one about 2. `scripts/verify.mjs` runs the end-to-end checks in headless Chrome (`PLAYWRIGHT=<path to playwright-core> node scripts/verify.mjs`).
+A cold build takes about 6 minutes, an incremental one about 2.
 
-## How it works
+Two scripts run end-to-end checks in headless Chrome (`PLAYWRIGHT=<path to playwright-core>`; run `scripts/install.sh` or put `tools.json` in `dist/web` first):
+
+- `scripts/verify.mjs` plays Band: a test page frames the build with `sandbox="allow-scripts"` from a server on another origin, so the frame has a `null` origin. It checks `init`, `ready`, `dirty`, `save`, `saved`, `saveFailed`, `reload`, `mcp` (including `tools/list` against `tools.json` and a screenshot) for `.xlsx` and `.csv`, and that forged messages from a sibling frame are ignored.
+- `scripts/verify-host.mjs` checks the older `?host=parent` path through `host.html`.
+
+## How the MCP bridge works
 
 ```
 agent -> document.modelContext tool -> host.html -> postMessage -> app/src/mcp.rs -> gridcraft-mcp Server -> control::handle -> SheetApp
@@ -34,10 +64,11 @@ agent -> document.modelContext tool -> host.html -> postMessage -> app/src/mcp.r
 
 All three come from `apps/gridcraft-web/src/` at `e6b6b349708a`, are MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE` and `NOTICE` are copied to the root), and say so in their first lines.
 
-- `app/src/host.rs`: the stock `?host=parent` bridge, verbatim. Reusing it keeps `gridcraft:open/save` identical to the stock build.
-- `app/src/web.rs`: the eframe runner and browser services (picker, download, clipboard, print). Changed only to wrap the app in `Rc<RefCell<..>>` and call `McpHost::new` and `McpHost::frame` (marked `wrapper:`).
-- `app/src/main.rs`: `mod mcp` added.
-- `app/index.html` and `app/Trunk.toml` are adapted. The icon link is dropped, because the icon lives in GridCraft's repo, and `host.html` is copied to `dist`.
+- `app/src/host.rs`: the stock `?host=parent` bridge, verbatim. Reusing it keeps `gridcraft:open/save` identical to the stock build. Band's bridge is the new `app/src/band.rs`, not a copy.
+- `app/src/web.rs`: the eframe runner and browser services (picker, download, clipboard, print). Changed only to wrap the app in `Rc<RefCell<..>>`, call `McpHost::new` and `McpHost::frame`, and start and sync the Band bridge (marked `wrapper:`). One blank line after a doc comment is gone, so clippy passes.
+- `app/src/main.rs`: `mod band` and `mod mcp` added.
+- `app/index.html` and `app/Trunk.toml` are adapted. The icon link is dropped, because the icon lives in GridCraft's repo, `host.html` is copied to `dist`, and a head script keeps the Band hello port.
+- `rustfmt.toml` repeats GridCraft's formatting settings, which the copied files follow.
 - `Cargo.lock` started as GridCraft's lock at that rev, so egui, wgpu and the rest resolve to the versions GridCraft tests. `[profile.release]` is repeated in the root `Cargo.toml` because Cargo ignores a dependency's profile.
 
 They are copied because `apps/gridcraft-web` is a binary crate, not a library, so its shell cannot be depended on.
@@ -48,7 +79,8 @@ They are copied because `apps/gridcraft-web` is a binary crate, not a library, s
 2. Diff `apps/gridcraft-web/src/{main,web,host}.rs`, `index.html` and `Trunk.toml` between the old and new rev, and port the changes into the copies.
 3. Replace `Cargo.lock` with GridCraft's at the new rev, then `cargo update -p` as needed. Keep `egui`, `eframe` and `rfd` in sync with GridCraft's `[workspace.dependencies]`.
 4. Raise `rust-toolchain.toml` if GridCraft's needs it (1.95 at this rev).
-5. Run `scripts/verify.mjs` and compare `tools/list` with a `gridcraft-cli mcp` built from the new rev.
+5. Run `scripts/install.sh <BAND_HOME>` (or the build and `cargo run -p gridcraft-webmcp --bin tools-json`), then `scripts/verify.mjs`. It fails if `tools/list` over the port differs from `tools.json`. Compare `tools.json` with a `gridcraft-cli mcp` built from the new rev, and bump `version` in `band-extension.json` (GridCraft version, then a dash and the revision of this wrapper).
+6. Reinstall into Band and run `band extensions reload`.
 
 ## What would break on upgrade
 
@@ -67,10 +99,10 @@ Release build, rev `e6b6b349708a`, Apple silicon, Chrome with SwiftShader (softw
 
 ## Evidence
 
-`.am/evidence/` holds the W2 and W5 screenshots, the tool lists of the wrapper and the stock CLI, the `band browsers` outputs against a throwaway playground hub, and the saved `.xlsx`. The Band side is one edited script in the Band spike worktree, `apps/hub/tests/playground-webmcp.ts`, which now takes `GRIDCRAFT_PAGE` (use `host.html`) and `GRIDCRAFT_WAIT_TOOL` (use `set_cell`) next to `GRIDCRAFT_DIST`.
+`.am/evidence/` holds the screenshots and saved files from `scripts/verify.mjs`, the install listing and the fmt and clippy output, next to the earlier spike evidence (W2 and W5 screenshots, tool lists, `band browsers` outputs). The Band side of the spike is one edited script in the Band spike worktree, `apps/hub/tests/playground-webmcp.ts`, which takes `GRIDCRAFT_PAGE` (use `host.html`) and `GRIDCRAFT_WAIT_TOOL` (use `set_cell`) next to `GRIDCRAFT_DIST`.
 
 ## Limits
 
-- `save_workbook` always sends bytes to the page. It cannot write to a path.
-- `open_workbook` with a path fails on the web for the same reason. Use `gridcraft:open` with bytes.
+- `save_workbook` always sends bytes to the page (as `save` in Band). It cannot write to a path.
+- `open_workbook` with a path fails on the web for the same reason. Band leaves both tools out of the agent's list.
 - No icon, no PWA, no desktop app.

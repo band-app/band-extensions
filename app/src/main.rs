@@ -1,6 +1,6 @@
 // Copied from storytold/gridcraft apps/gridcraft-web/src/main.rs at rev e6b6b349708a (MIT OR Apache-2.0,
 // see LICENSE-MIT and LICENSE-APACHE at the repo root).
-// Changes: added 'mod mcp', renamed the crate in messages.
+// Changes: added 'mod band' and 'mod mcp', renamed the crate in messages.
 
 //! GridCraft in the browser.
 //!
@@ -18,6 +18,8 @@
 //! notes and comments.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+#[cfg(target_arch = "wasm32")]
+mod band;
 #[cfg(target_arch = "wasm32")]
 mod host;
 #[cfg(target_arch = "wasm32")]

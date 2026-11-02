@@ -1,0 +1,3 @@
+# The same settings as GridCraft, whose shell files are copied here.
+max_width = 150
+use_small_heuristics = "Max"

@@ -1,6 +1,7 @@
 // Copied from storytold/gridcraft apps/gridcraft-web/src/web.rs at rev e6b6b349708a (MIT OR Apache-2.0,
 // see LICENSE-MIT and LICENSE-APACHE at the repo root).
-// Changes: wrapped the app in Rc<RefCell<..>>, added the mcp::McpHost frame hook; marked with 'wrapper:'.
+// Changes: wrapped the app in Rc<RefCell<..>>, added the mcp::McpHost frame hook and the band::Bridge
+// editor port; marked with 'wrapper:'. Also removed a blank line after a doc comment (clippy).
 
 //! The browser shell: web `Services`, drag-and-drop, and the eframe web runner.
 
@@ -36,6 +37,9 @@ pub fn start() {
         // workbooks in it and stores what it saves (`host`).
         let bridge = if query_param("host").as_deref() == Some("parent") { crate::host::Bridge::new() } else { None };
         let app_bridge = bridge.clone();
+        // wrapper: any other framed page is a Band editor tab, which talks over a MessagePort.
+        let band = if bridge.is_none() && query_param("host").is_none() { crate::band::Bridge::listen() } else { None };
+        let app_band = band.clone();
         let result = eframe::WebRunner::new()
             .start(
                 canvas,
@@ -44,7 +48,7 @@ pub fn start() {
                     let inbox: Inbox = Inbox::default();
                     let mut session = Session::new();
                     // In host mode the parent sends the workbook to edit; no sample meanwhile.
-                    let q = if app_bridge.is_some() { String::new() } else { query() };
+                    let q = if app_bridge.is_some() || app_band.is_some() { String::new() } else { query() };
                     if let Some(name) = q.split(['?', '&']).find_map(|kv| kv.strip_prefix("sample=")) {
                         let _ = session.execute("file.new", serde_json::json!({"sample": name}));
                     } else if q.contains("sample") {
@@ -53,6 +57,9 @@ pub fn start() {
                     let mut services = services(inbox.clone(), cc.egui_ctx.clone());
                     if let Some(bridge) = &app_bridge {
                         bridge.connect(&mut services, inbox.clone(), cc.egui_ctx.clone());
+                    }
+                    if let Some(band) = &app_band {
+                        band.connect(&mut services, inbox.clone(), cc.egui_ctx.clone());
                     }
                     let mut app = SheetApp::new(session, services);
                     app.ui.system_theme = true;
@@ -72,13 +79,18 @@ pub fn start() {
                         crate::host::Bridge::set_author(&mut app, &author);
                     }
                     // wrapper: the MCP server shares the app with the frame loop, and listens
-                    // before `gridcraft:ready` tells the parent to start talking.
+                    // before the parent is told the app is ready.
                     let app = Rc::new(RefCell::new(app));
-                    let mcp = app_bridge.as_ref().and_then(|_| crate::mcp::McpHost::new(app.clone(), cc.egui_ctx.clone()));
+                    let transport = match (&app_bridge, &app_band) {
+                        (_, Some(band)) => Some(band.transport()),
+                        (Some(_), None) => crate::mcp::Transport::parent_window(cc.egui_ctx.clone()),
+                        (None, None) => None,
+                    };
+                    let mcp = transport.map(|t| crate::mcp::McpHost::new(app.clone(), cc.egui_ctx.clone(), t));
                     if let Some(bridge) = &app_bridge {
                         bridge.post_ready();
                     }
-                    Ok(Box::new(WebShell { app, inbox, bridge: app_bridge, mcp }))
+                    Ok(Box::new(WebShell { app, inbox, bridge: app_bridge, band: app_band, mcp }))
                 }),
             )
             .await;
@@ -108,6 +120,8 @@ struct WebShell {
     mcp: Option<crate::mcp::McpHost>,
     inbox: Inbox,
     bridge: Option<crate::host::Bridge>,
+    /// wrapper: Band's editor protocol (framed without `?host=parent`).
+    band: Option<crate::band::Bridge>,
 }
 
 impl eframe::App for WebShell {
@@ -140,6 +154,9 @@ impl eframe::App for WebShell {
             app.ui(ui);
             if let Some(bridge) = &self.bridge {
                 bridge.sync(&mut app);
+            }
+            if let Some(band) = &self.band {
+                band.sync(&mut app);
             }
         }
         // wrapper: the MCP server borrows the app itself, so it runs once this borrow is dropped.
@@ -296,7 +313,6 @@ fn mime_for(name: &str) -> &'static str {
 }
 
 /// Trigger a browser save dialog or download of `bytes` named after `name`.
-
 fn download(name: &str, bytes: &[u8]) -> Result<(), String> {
     let js = |e: wasm_bindgen::JsValue| format!("{e:?}");
     let window = web_sys::window().ok_or("no window")?;
