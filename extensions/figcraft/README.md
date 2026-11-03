@@ -34,12 +34,13 @@ If a file does not open (a damaged or unsupported file), the tab shows FigCraft'
 ## What the files do
 
 - `app/src/editor.rs` implements `band_editor::Editor` for FigCraft. The shared bridge in `crates/band-editor` handles the port, `init`, `ready`, `dirty`, `save`, `saved`, `saveFailed`, `reload` and `mcp`. Opening closes FigCraft's starting Untitled tab and runs `file.open` with the bytes. A confirmed `saved` marks the document as sent clean, so edits made while the save was in flight stay unsaved.
-- `app/src/mcp.rs` answers `mcp` messages with FigCraft's own MCP server (`figcraft-mcp`, the one behind `figcraft-cli mcp`), so an agent gets the same 19 tools as the CLI, running against the open document. The wrapper answers three tools itself:
+- `app/src/mcp.rs` answers `mcp` messages with FigCraft's own MCP server (`figcraft-mcp`, the one behind `figcraft-cli mcp`), so an agent gets the same 19 tools as the CLI, running against the open document. The wrapper answers four tools itself:
   - `save_file` writes to a path and the browser has no file system. The wrapper asks Band to save the open file, as File > Save does.
+  - `export` with `path` would write a file. The wrapper refuses it with an error that says to leave `path` out. Without `path`, the export comes back in the reply.
   - `open_file` reads a path. It answers with an error.
   - `screenshot` with `window` set needs a drawn frame and an attached window. It answers with an error that says to leave `window` out. Without `window` the page is rendered, as in the headless server.
 - `app/src/tools_json.rs` prints `tools.json` (`{ "tools": [...] }`, the `tools/list` answer of the same `figcraft_mcp::Server`) with `"agent": false` on `open_file` and `save_file`. It needs no browser.
-- `verify.mjs` plays Band in headless Chrome: a test page frames the build from another origin with `sandbox="allow-scripts"`, so the frame has a `null` origin. For both `.figcraft` and `.fig` it checks `init`, `ready`, `dirty`, `save`, `saved`, `saveFailed`, `reload`, `mcp` (`tools/list` against `tools.json`, an edit, a screenshot), that a saved file reopens with the edit, that a file that does not open is not saved, and that forged messages from a sibling frame are ignored. Run it after the build above:
+- `verify.mjs` plays Band in headless Chrome: a test page frames the build from another origin with `sandbox="allow-scripts"`, so the frame has a `null` origin. For both `.figcraft` and `.fig` it checks `init`, `ready`, `dirty`, `save`, `saved`, `saveFailed`, `reload`, `mcp` (`tools/list` against `tools.json`, an edit, `export` with and without `path`, a screenshot), that a saved file reopens with the edit, that a file that does not open is not saved, and that forged messages from a sibling frame are ignored. Run it after the build above:
 
   ```sh
   PLAYWRIGHT=<path to playwright-core> node extensions/figcraft/verify.mjs

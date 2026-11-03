@@ -6,12 +6,14 @@
 //!
 //! The server runs on the frame loop with the running app as its [`Backend`], which calls the app's
 //! control channel handler (`figcraft_ui_egui::control::handle`) directly. Every call is synchronous.
-//! Three tools need more than that, so the wrapper answers them itself and passes every other call
+//! Four tools need more than that, so the wrapper answers them itself and passes every other call
 //! to the server unchanged:
 //!
 //! - `save_file` writes to a path, and the browser has no file system. The wrapper asks Band to save
 //!   the open file instead (the same request as File > Save). `tools.json` marks it `"agent": false`.
 //! - `open_file` reads a path. It answers with an error. `tools.json` marks it `"agent": false`.
+//! - `export` with `path` would write a file, and the browser has no file system. The wrapper
+//!   refuses it with an error that says to leave `path` out, which returns the bytes in the reply.
 //! - `screenshot` with `window` set captures the window, which needs a drawn frame. The wrapper
 //!   answers with an error that says to leave `window` out, which renders the page. A screenshot
 //!   without `window` renders the document and works as it does headless.
@@ -65,6 +67,12 @@ impl McpHost {
             if let Some(id) = tool_call(&line, "save_file") {
                 self.want_save.set(true);
                 replies.push(tool_reply(&id, "Asked Band to save the open file.", false));
+            } else if let Some(id) = tool_call_with(&line, "export", "path") {
+                replies.push(tool_reply(
+                    &id,
+                    "export: `path` is not available in Band, there is no file system. Call export without `path` to get the file in the reply.",
+                    true,
+                ));
             } else if let Some(id) = tool_call(&line, "open_file") {
                 replies.push(tool_reply(&id, "open_file: Band opens the file, there is no path to read here.", true));
             } else if let Some(reply) = self.server.handle_line(&line) {
@@ -77,9 +85,19 @@ impl McpHost {
 
 /// The request id when `line` is a `tools/call` of the tool `name`.
 fn tool_call(line: &str, name: &str) -> Option<Value> {
+    call_id(line, name, None)
+}
+
+/// The request id when `line` is a `tools/call` of the tool `name` that sets the argument `arg`.
+fn tool_call_with(line: &str, name: &str, arg: &str) -> Option<Value> {
+    call_id(line, name, Some(arg))
+}
+
+fn call_id(line: &str, name: &str, arg: Option<&str>) -> Option<Value> {
     let m: Value = serde_json::from_str(line).ok()?;
     let is_call = m.get("method").and_then(Value::as_str) == Some("tools/call") && m.pointer("/params/name").and_then(Value::as_str) == Some(name);
-    if is_call { m.get("id").filter(|id| id.is_string() || id.is_number()).cloned() } else { None }
+    let has_arg = arg.is_none_or(|a| m.pointer("/params/arguments").and_then(|args| args.get(a)).is_some_and(|v| !v.is_null()));
+    if is_call && has_arg { m.get("id").filter(|id| id.is_string() || id.is_number()).cloned() } else { None }
 }
 
 /// The `tools/call` response for `id`: a text block.

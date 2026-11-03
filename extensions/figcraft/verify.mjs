@@ -228,6 +228,11 @@ try {
     const names1 = await layerNames(page, id);
     const dirty1 = (await logOf(page, id)).find((m) => m.type === "dirty");
     check(`S1-${ext}-edit`, names1.includes("EditedByAgent") && dirty1.dirty === true, `dirty ${dirty1.dirty}; layers: ${names1.slice(0, 6).join(", ")}`);
+    // export with a path is refused, and without one it returns the bytes.
+    const refused = await call(page, id, "export", { format: "svg", path: "/tmp/out.svg" });
+    check(`S1-${ext}-export-path`, refused.isError === true && /path/.test(text(refused)), text(refused).slice(0, 100));
+    const exported = await call(page, id, "export", { format: "svg" });
+    check(`S1-${ext}-export-bytes`, !exported.isError && /<svg/.test(text(exported)), text(exported).slice(0, 60));
     const shot = await call(page, id, "screenshot", {});
     const img = shot.content.find((c) => c.type === "image");
     if (img) writeFileSync(join(out, `s1-${ext}-screenshot.png`), Buffer.from(img.data, "base64"));
