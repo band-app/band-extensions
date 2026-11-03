@@ -1,0 +1,19 @@
+{
+  "id": "figcraft",
+  "name": "FigCraft",
+  "version": "0.15.0-1",
+  "extensionApi": 1,
+  "contributes": {
+    "fileEditors": [
+      {
+        "id": "design",
+        "label": "FigCraft",
+        "selector": ["*.figcraft", "*.fig"],
+        "default": true,
+        "entry": "index.html",
+        "binary": true,
+        "tools": "tools.json"
+      }
+    ]
+  }
+}

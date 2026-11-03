@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/band-editor", "extensions/gridcraft/app"]
 # An extension whose app needs its own [patch] section or lock file is its own workspace, with its
 # own Cargo.lock, and is built from its folder. See "Add an extension" in README.md.
-exclude = ["extensions/wordcraft"]
+exclude = ["extensions/wordcraft", "extensions/figcraft"]
 
 [workspace.package]
 version = "0.1.0"

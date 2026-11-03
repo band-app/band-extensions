@@ -1,0 +1,75 @@
+# FigCraft's own Cargo workspace, so egui, wgpu and the rest resolve from FigCraft's own Cargo.lock
+# (the one at the pinned rev) and not from the other extensions' lock. The root workspace excludes it.
+[workspace]
+resolver = "3"
+members = ["app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+# FigCraft is consumed only as git dependencies at one pinned rev; see README.md before changing it.
+[workspace.dependencies]
+band-editor = { path = "../../crates/band-editor" }
+figcraft-doc = { git = "https://github.com/storytold/figcraft.git", rev = "35684eaa028e", package = "figcraft-doc" }
+figcraft-engine = { git = "https://github.com/storytold/figcraft.git", rev = "35684eaa028e", package = "figcraft-engine" }
+figcraft-format = { git = "https://github.com/storytold/figcraft.git", rev = "35684eaa028e", package = "figcraft-format" }
+figcraft-text = { git = "https://github.com/storytold/figcraft.git", rev = "35684eaa028e", package = "figcraft-text" }
+figcraft-collab-net = { git = "https://github.com/storytold/figcraft.git", rev = "35684eaa028e", package = "figcraft-collab-net" }
+figcraft-mcp = { git = "https://github.com/storytold/figcraft.git", rev = "35684eaa028e", package = "figcraft-mcp" }
+figcraft-ui-egui = { git = "https://github.com/storytold/figcraft.git", rev = "35684eaa028e", package = "figcraft-ui-egui" }
+# These must resolve to the versions FigCraft's own Cargo.lock uses at that rev.
+egui = "0.37"
+eframe = { version = "0.37", default-features = false }
+log = "0.4"
+serde_json = { version = "1", features = ["float_roundtrip"] }
+base64 = "0.22"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+# FigCraft's lints, because the files copied from it follow them.
+[workspace.lints.clippy]
+cognitive_complexity = "deny"
+too_many_arguments = "deny"
+wildcard_imports = "deny"
+dbg_macro = "warn"
+needless_range_loop = "allow"
+chunks_exact_to_as_chunks = "allow"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+
+# Cargo ignores a dependency's profiles and [patch] sections, so FigCraft's are repeated here.
+# The web build (app/index.html: data-cargo-profile) is optimised for size.
+[profile.release]
+lto = "thin"
+codegen-units = 4
+
+[profile.web-release]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+debug = false
+strip = true
+panic = "abort"
+
+[patch.crates-io]
+ecolor = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+emath = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+epaint = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+epaint_default_fonts = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui-winit = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui-wgpu = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui_extras = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+eframe = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+winit = { git = "https://github.com/storytold/winit.git", rev = "a517b3846ee8457d84ee4975110bfda6797c44dc" }
+
+# craft-libs' vendored krilla 0.8.2 (decoded PNGs are capped, a panic while drawing unwinds).
+krilla = { git = "https://github.com/storytold/craft-libs", rev = "e11f9d9aebea5f6b8e74643c1ea1ed172ba5f545" }
