@@ -1,0 +1,53 @@
+# WordCraft is its own Cargo workspace (the root workspace excludes it): WordCraft patches egui,
+# winit and krilla with git forks, and Cargo reads `[patch]` only from the root of the workspace
+# being built, so the patch block below has to live here. See README.md before changing the rev.
+[workspace]
+resolver = "3"
+members = ["app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+# WordCraft is consumed only as git dependencies at one pinned rev.
+[workspace.dependencies]
+band-editor = { path = "../../crates/band-editor" }
+wordcraft-doc = { git = "https://github.com/storytold/wordcraft.git", rev = "ae5c65b9dd11", package = "wordcraft-doc" }
+wordcraft-engine = { git = "https://github.com/storytold/wordcraft.git", rev = "ae5c65b9dd11", package = "wordcraft-engine" }
+wordcraft-mcp = { git = "https://github.com/storytold/wordcraft.git", rev = "ae5c65b9dd11", package = "wordcraft-mcp" }
+wordcraft-ui-egui = { git = "https://github.com/storytold/wordcraft.git", rev = "ae5c65b9dd11", package = "wordcraft-ui-egui" }
+wordcraft-fonts = { git = "https://github.com/storytold/wordcraft.git", rev = "ae5c65b9dd11", package = "wordcraft-fonts" }
+# These must match WordCraft's [workspace.dependencies] at that rev.
+egui = "0.37"
+eframe = { version = "0.37", default-features = false }
+rfd = "0.17"
+log = "0.4"
+serde_json = { version = "1", features = ["float_roundtrip"] }
+
+# Cargo ignores a dependency's profile, so WordCraft's release profile is repeated here.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 16
+debug = 0
+
+# Copied from WordCraft's Cargo.toml at the pinned rev. craft-pdf needs the krilla fork, the UI
+# needs the egui and winit forks.
+[patch.crates-io]
+krilla = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0" }
+ecolor = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+emath = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+epaint = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+epaint_default_fonts = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui-winit = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui-wgpu = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui_glow = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui_extras = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui_kittest = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui_system_font_provider = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+eframe = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui_demo_lib = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui_inspection = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+winit = { git = "https://github.com/storytold/winit.git", rev = "a517b3846ee8457d84ee4975110bfda6797c44dc" }

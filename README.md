@@ -5,6 +5,7 @@
 | Extension | Opens | App |
 |---|---|---|
 | [gridcraft](extensions/gridcraft/README.md) | `*.xlsx`, `*.csv` | [GridCraft](https://github.com/storytold/gridcraft) |
+| [wordcraft](extensions/wordcraft/README.md) | `*.docx`, `*.odt`, `*.rtf` | [WordCraft](https://github.com/storytold/wordcraft) |
 
 ## Install a release on a hub
 
@@ -58,7 +59,7 @@ To release: bump `version` in the manifest, merge, then `git tag gridcraft-v<ver
 
 ## Add an extension
 
-1. Create `extensions/<name>/app/` with a crate named `<name>-band` and add it to `members` in the root `Cargo.toml`. Its `Trunk.toml` writes to `../dist/web`, and its `index.html` keeps the `band:hello` script from the GridCraft one, which holds the port until the wasm has loaded.
+1. Create `extensions/<name>/app/` with a crate named `<name>-band` and add it to `members` in the root `Cargo.toml`. If the app needs its own `[patch]` section or lock file (WordCraft does), give `extensions/<name>/Cargo.toml` a `[workspace]` instead, put `exclude = ["extensions/<name>"]` in the root `Cargo.toml`, and keep a `Cargo.lock` there. `scripts/package.sh`, `ci.yml` and `release.yml` then run Cargo from `extensions/<name>/`. `extensions/wordcraft` is the example. Its `Trunk.toml` writes to `../dist/web`, and its `index.html` keeps the `band:hello` script from the GridCraft one, which holds the port until the wasm has loaded.
 2. Depend on `band-editor` and implement `band_editor::Editor` for the app: open bytes, report when the file is open, reload, report dirty, encode for save, learn whether Band accepted the save, and answer MCP requests. In `main`, call `band_editor::Bridge::listen()`, give it a repaint function with `set_repaint`, and call `Bridge::sync(&mut editor)` once per frame after the app has drawn. `extensions/gridcraft/app/src/editor.rs` is the worked example.
 3. Add a `tools-json` binary to the crate. It builds the app's MCP server over a backend that answers nothing, and prints `band_editor::tools_json::render(..)` with the tools an agent must not call (such as saving) listed in `not_for_agents`. `scripts/package.sh` runs it as `cargo run -p <name>-band --bin tools-json`.
 4. Write `extensions/<name>/band-extension.json` (id equal to the folder name) and a `NOTICE`. The root `LICENSE-MIT` and `LICENSE-APACHE` are added to every tarball.

@@ -37,7 +37,17 @@ jobs:
           fi
           echo "ext=$ext" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Find the Cargo workspace
+        id: ws
+        run: |
+          if grep -q '^\[workspace\]' "extensions/${{ steps.pick.outputs.ext }}/Cargo.toml" 2>/dev/null; then
+            echo "dir=extensions/${{ steps.pick.outputs.ext }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "dir=." >> "$GITHUB_OUTPUT"
+          fi
       - uses: ./.github/actions/setup
+        with:
+          workspace: ${{ steps.ws.outputs.dir }}
       - name: Package
         run: scripts/package.sh ${{ steps.pick.outputs.ext }}
       - uses: actions/upload-artifact@v4
