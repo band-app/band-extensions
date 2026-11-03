@@ -1,0 +1,40 @@
+[package]
+name = "vectorcraft-band"
+description = "VectorCraft as a Band editor extension: the web build, Band's editor protocol and VectorCraft's MCP tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "vectorcraft-band"
+path = "src/main.rs"
+
+[[bin]]
+name = "tools-json"
+path = "src/tools_json.rs"
+
+[dependencies]
+band-editor = { workspace = true }
+serde_json = { workspace = true }
+
+# The VectorCraft crates are needed only by the web build, so the native `tools-json` binary
+# compiles nothing but band-editor.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+vectorcraft-doc = { workspace = true }
+vectorcraft-engine = { workspace = true }
+vectorcraft-format = { workspace = true }
+vectorcraft-text = { workspace = true }
+vectorcraft-ui-egui = { workspace = true }
+egui = { workspace = true }
+log = { workspace = true }
+# `wgpu` pulls egui-wgpu's defaults: WebGPU plus the WebGL2 fallback.
+eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit"] }
+rfd = { workspace = true }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement", "HtmlInputElement", "KeyboardEvent", "HtmlIFrameElement", "HtmlAnchorElement", "Blob", "BlobPropertyBag", "ClipboardEvent", "DataTransfer", "File", "FileList", "Url", "Location", "CssStyleDeclaration", "Event", "EventTarget", "MouseEvent", "PointerEvent", "TouchEvent", "AddEventListenerOptions", "DomRect", "DragEvent", "Storage", "Navigator", "RequestInit", "Response", "AbortController", "AbortSignal"] }

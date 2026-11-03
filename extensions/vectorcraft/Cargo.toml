@@ -1,0 +1,72 @@
+# VectorCraft's extension is its own workspace: VectorCraft needs patched egui and winit forks and
+# its own lock, which would change what the other extensions resolve. See README.md before changing
+# the pinned rev.
+[workspace]
+resolver = "3"
+members = ["app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+# VectorCraft is consumed only as git dependencies at one pinned rev.
+[workspace.dependencies]
+band-editor = { path = "../../crates/band-editor" }
+vectorcraft-doc = { git = "https://github.com/storytold/vectorcraft.git", rev = "1008166fa7c6" }
+vectorcraft-engine = { git = "https://github.com/storytold/vectorcraft.git", rev = "1008166fa7c6", default-features = false, features = ["bundled-fonts"] }
+vectorcraft-format = { git = "https://github.com/storytold/vectorcraft.git", rev = "1008166fa7c6" }
+vectorcraft-text = { git = "https://github.com/storytold/vectorcraft.git", rev = "1008166fa7c6", default-features = false }
+vectorcraft-ui-egui = { git = "https://github.com/storytold/vectorcraft.git", rev = "1008166fa7c6" }
+# These must resolve to the versions VectorCraft's own Cargo.lock uses at that rev.
+egui = "0.37"
+eframe = { version = "0.37", default-features = false }
+rfd = "0.17"
+log = "0.4"
+serde_json = { version = "1", features = ["float_roundtrip"] }
+
+# VectorCraft's lints, which its copied files follow.
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+cognitive_complexity = "deny"
+too_many_arguments = "deny"
+wildcard_imports = "deny"
+dbg_macro = "warn"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+
+# Cargo ignores a dependency's profile, so VectorCraft's release profile is repeated here.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+# Copied from VectorCraft's [patch.crates-io] at the pinned rev. Cargo reads patches only from the
+# root workspace, so a dependent has to repeat them.
+[patch.crates-io]
+hayro-syntax = { git = "https://github.com/storytold/craft-libs", rev = "f8f8829cc7be65d466d687dae381d1ca60e31242" }
+hayro-interpret = { git = "https://github.com/storytold/craft-libs", rev = "f8f8829cc7be65d466d687dae381d1ca60e31242" }
+hayro-jbig2 = { git = "https://github.com/storytold/craft-libs", rev = "f8f8829cc7be65d466d687dae381d1ca60e31242" }
+hayro-cmap = { git = "https://github.com/storytold/craft-libs", rev = "f8f8829cc7be65d466d687dae381d1ca60e31242" }
+hayro-postscript = { git = "https://github.com/storytold/craft-libs", rev = "f8f8829cc7be65d466d687dae381d1ca60e31242" }
+krilla = { git = "https://github.com/storytold/craft-libs", rev = "f8f8829cc7be65d466d687dae381d1ca60e31242" }
+ecolor = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+emath = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+epaint = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+epaint_default_fonts = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui-winit = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui-wgpu = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui_glow = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui_extras = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui_kittest = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui_system_font_provider = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+eframe = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui_demo_lib = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+egui_inspection = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
+winit = { git = "https://github.com/storytold/winit.git", rev = "a517b3846ee8457d84ee4975110bfda6797c44dc" }

@@ -1,0 +1,19 @@
+{
+  "id": "vectorcraft",
+  "name": "VectorCraft",
+  "version": "0.21.0-1",
+  "extensionApi": 1,
+  "contributes": {
+    "fileEditors": [
+      {
+        "id": "drawing",
+        "label": "VectorCraft",
+        "selector": ["*.svg", "*.svgz", "*.vectorcraft"],
+        "default": true,
+        "entry": "index.html",
+        "binary": true,
+        "tools": "tools.json"
+      }
+    ]
+  }
+}
