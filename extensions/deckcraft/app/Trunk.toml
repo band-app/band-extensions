@@ -1,0 +1,18 @@
+# Build with: trunk build --release   (from this directory). scripts/package.sh does this and packs the result.
+[build]
+target = "index.html"
+dist = "../dist/web"
+public_url = "./"
+filehash = true
+# The hook below rewrites files after Trunk has hashed them, so the integrity attributes would not match.
+no_sri = true
+
+[serve]
+addresses = ["127.0.0.1"]
+port = 8773
+
+# Moves wasm-bindgen's snippets/ next to the main script; see the script for why.
+[[hooks]]
+stage = "post_build"
+command = "sh"
+command_arguments = ["flatten-snippets.sh"]

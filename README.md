@@ -6,6 +6,7 @@
 |---|---|---|
 | [gridcraft](extensions/gridcraft/README.md) | `*.xlsx`, `*.csv` | [GridCraft](https://github.com/storytold/gridcraft) |
 | [wordcraft](extensions/wordcraft/README.md) | `*.docx`, `*.odt`, `*.rtf` | [WordCraft](https://github.com/storytold/wordcraft) |
+| [deckcraft](extensions/deckcraft/README.md) | `*.pptx` | [DeckCraft](https://github.com/storytold/deckcraft) |
 
 ## Install a release on a hub
 
