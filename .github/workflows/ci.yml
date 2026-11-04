@@ -54,14 +54,35 @@ jobs:
       matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
+      # An extension with its own [workspace] in extensions/<name>/Cargo.toml (and its own Cargo.lock)
+      # builds from that folder. Every other extension builds in the root workspace.
+      - name: Find the Cargo workspace
+        id: ws
+        run: |
+          if grep -q '^\[workspace\]' "extensions/${{ matrix.ext }}/Cargo.toml" 2>/dev/null; then
+            echo "dir=extensions/${{ matrix.ext }}" >> "$GITHUB_OUTPUT"
+            echo "pkgs=--workspace" >> "$GITHUB_OUTPUT"
+            echo "fmt=--all" >> "$GITHUB_OUTPUT"
+          else
+            echo "dir=." >> "$GITHUB_OUTPUT"
+            echo "pkgs=-p band-editor -p ${{ matrix.ext }}-band" >> "$GITHUB_OUTPUT"
+            echo "fmt=-p band-editor -p ${{ matrix.ext }}-band" >> "$GITHUB_OUTPUT"
+          fi
       - uses: ./.github/actions/setup
+        with:
+          workspace: ${{ steps.ws.outputs.dir }}
       - name: Format
-        run: cargo fmt --check -p band-editor -p ${{ matrix.ext }}-band
+        working-directory: ${{ steps.ws.outputs.dir }}
+        run: cargo fmt --check ${{ steps.ws.outputs.fmt }}
       - name: Clippy (native)
-        run: cargo clippy -p band-editor -p ${{ matrix.ext }}-band -- -D warnings
+        working-directory: ${{ steps.ws.outputs.dir }}
+        run: cargo clippy ${{ steps.ws.outputs.pkgs }} -- -D warnings
       - name: Clippy (wasm32)
-        run: cargo clippy --target wasm32-unknown-unknown -p band-editor -p ${{ matrix.ext }}-band -- -D warnings
+        working-directory: ${{ steps.ws.outputs.dir }}
+        run: cargo clippy --target wasm32-unknown-unknown ${{ steps.ws.outputs.pkgs }} -- -D warnings
       - name: Test
+        # band-editor is part of the root workspace; an extension with its own workspace only depends on it.
+        if: steps.ws.outputs.dir == '.'
         run: cargo test -p band-editor
       - name: Package
         run: scripts/package.sh ${{ matrix.ext }}

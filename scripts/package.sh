@@ -5,7 +5,7 @@
 #   dist/<ext>-<version>.tar.gz         one top-level folder, <ext>/
 #   dist/<ext>-<version>.tar.gz.sha256  `sha256sum` format, checked from inside dist/
 # The folder holds band-extension.json, tools.json, the web build (each .wasm and .js with a .gz
-# copy, and a .br copy when `brotli` is installed), LICENSE-MIT, LICENSE-APACHE and NOTICE.
+# copy, also inside folders such as snippets/, and a .br copy when `brotli` is installed), LICENSE-MIT, LICENSE-APACHE and NOTICE.
 # SKIP_BUILD=1 reuses extensions/<ext>/dist/web instead of building it.
 set -euo pipefail
 
@@ -27,19 +27,22 @@ fi
 build="$src/dist/web"
 [ -f "$build/index.html" ] || { echo "no $build/index.html: build first" >&2; exit 1; }
 
-# tools.json comes from the extension's own MCP server; the crate is named <ext>-band.
-(cd "$root" && cargo run --quiet --release -p "$ext-band" --bin tools-json) > "$build/tools.json"
+# tools.json comes from the extension's own MCP server; the crate is named <ext>-band. An extension
+# with its own [workspace] in extensions/<ext>/Cargo.toml builds from that folder.
+cargo_dir="$root"
+if grep -q '^\[workspace\]' "$src/Cargo.toml" 2>/dev/null; then cargo_dir="$src"; fi
+(cd "$cargo_dir" && cargo run --quiet --release -p "$ext-band" --bin tools-json) > "$build/tools.json"
 
 stage="$root/dist/stage"
 rm -rf "$stage"
 mkdir -p "$stage/$ext"
-cp "$build"/* "$stage/$ext/"
+cp -R "$build"/* "$stage/$ext/"
 cp "$src/band-extension.json" "$src/NOTICE" "$root/LICENSE-MIT" "$root/LICENSE-APACHE" "$stage/$ext/"
 
-for f in "$stage/$ext"/*.wasm "$stage/$ext"/*.js; do
+while IFS= read -r f; do
   gzip -9 -k -f "$f"
   if command -v brotli >/dev/null; then brotli -q 11 -f -k "$f"; fi
-done
+done < <(find "$stage/$ext" -type f \( -name '*.wasm' -o -name '*.js' \))
 
 name="$ext-$version.tar.gz"
 rm -f "$root/dist/$name" "$root/dist/$name.sha256"

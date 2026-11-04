@@ -1,6 +1,11 @@
 name: Set up the build
 description: Rust (the channel in rust-toolchain.toml), the cargo cache, trunk, wasm-bindgen and Node
 
+inputs:
+  workspace:
+    description: Folder of the Cargo workspace to build (an extension with its own Cargo.lock), relative to the repo root
+    default: .
+
 runs:
   using: composite
   steps:
@@ -13,10 +18,13 @@ runs:
     - name: Read the wasm-bindgen version from Cargo.lock
       id: wasm-bindgen
       shell: bash
-      run: echo "version=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"/\1/p')" >> "$GITHUB_OUTPUT"
+      env:
+        WORKSPACE: ${{ inputs.workspace }}
+      run: echo "version=$(grep -A1 '^name = "wasm-bindgen"$' "$WORKSPACE/Cargo.lock" | sed -n 's/^version = "\(.*\)"/\1/p')" >> "$GITHUB_OUTPUT"
     - name: Cache cargo and build output
       uses: Swatinem/rust-cache@v2
       with:
+        workspaces: ${{ inputs.workspace }}
         # The wasm target and the native target (tools-json) share one cache per extension job.
         shared-key: build
         cache-targets: true

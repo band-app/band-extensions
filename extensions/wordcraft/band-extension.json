@@ -1,0 +1,19 @@
+{
+  "id": "wordcraft",
+  "name": "WordCraft",
+  "version": "0.15.0-1",
+  "extensionApi": 1,
+  "contributes": {
+    "fileEditors": [
+      {
+        "id": "document",
+        "label": "WordCraft",
+        "selector": ["*.docx", "*.odt", "*.rtf"],
+        "default": true,
+        "entry": "index.html",
+        "binary": true,
+        "tools": "tools.json"
+      }
+    ]
+  }
+}
