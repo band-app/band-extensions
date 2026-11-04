@@ -1,0 +1,19 @@
+{
+  "id": "deckcraft",
+  "name": "DeckCraft",
+  "version": "0.15.0-1",
+  "extensionApi": 1,
+  "contributes": {
+    "fileEditors": [
+      {
+        "id": "deck",
+        "label": "DeckCraft",
+        "selector": ["*.pptx"],
+        "default": true,
+        "entry": "index.html",
+        "binary": true,
+        "tools": "tools.json"
+      }
+    ]
+  }
+}
