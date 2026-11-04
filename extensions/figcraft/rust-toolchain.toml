@@ -1,0 +1,7 @@
+[toolchain]
+# FigCraft at the pinned rev uses std APIs that are stable only from a release after 1.96
+# (u64::isolate_lowest_one), although its rust-version says 1.95. FigCraft builds on stable.
+channel = "1.99"
+targets = ["wasm32-unknown-unknown"]
+profile = "minimal"
+components = ["rustfmt", "clippy"]

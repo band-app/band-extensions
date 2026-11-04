@@ -1,0 +1,10 @@
+# Build with: trunk build --release   (from this directory). scripts/package.sh does this and packs the result
+[build]
+target = "index.html"
+dist = "../dist/web"
+public_url = "./"
+filehash = true
+
+[serve]
+addresses = ["127.0.0.1"]
+port = 8773
