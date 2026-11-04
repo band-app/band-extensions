@@ -1,0 +1,17 @@
+# Build with: trunk build --release   (from this directory). scripts/package.sh does this and packs the result.
+[build]
+target = "index.html"
+dist = "../dist/web"
+public_url = "./"
+filehash = true
+
+[serve]
+addresses = ["127.0.0.1"]
+port = 8773
+
+# scripts/package.sh copies files, not folders, so the JS snippets wasm-bindgen writes into
+# snippets/ move next to the loader.
+[[hooks]]
+stage = "post_build"
+command = "node"
+command_arguments = ["flatten-snippets.mjs"]

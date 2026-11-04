@@ -8,6 +8,7 @@
 | [wordcraft](extensions/wordcraft/README.md) | `*.docx`, `*.odt`, `*.rtf` | [WordCraft](https://github.com/storytold/wordcraft) |
 | [deckcraft](extensions/deckcraft/README.md) | `*.pptx` | [DeckCraft](https://github.com/storytold/deckcraft) |
 | [figcraft](extensions/figcraft/README.md) | `*.figcraft`, `*.fig` | [FigCraft](https://github.com/storytold/figcraft) |
+| [vectorcraft](extensions/vectorcraft/README.md) | `*.svg`, `*.svgz`, `*.vectorcraft` | [VectorCraft](https://github.com/storytold/vectorcraft) |
 
 ## Install a release on a hub
 
