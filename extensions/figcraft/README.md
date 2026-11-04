@@ -17,12 +17,11 @@ cargo clippy --target wasm32-unknown-unknown -- -D warnings
 cargo run --release -p figcraft-band --bin tools-json > dist/web/tools.json
 ```
 
-`scripts/package.sh figcraft` does not work for this extension yet, for two reasons that need a change in `scripts/` (and CI):
+`scripts/package.sh figcraft` and the CI jobs detect the `[workspace]` in this folder's `Cargo.toml` and run Cargo from here.
 
-- It runs `cargo run -p figcraft-band` from the repository root, which does not see this workspace. It has to run in `extensions/figcraft`.
-- It copies `dist/web/*` with a plain `cp`. The web build writes `snippets/eframe-<hash>/inline0.js`, which `figcraft-band-<hash>.js` imports, and `cp` skips a folder, so the packed extension would fail to load. It needs `cp -R`.
+## Rust toolchain
 
-The archive checked in S2 was made with a copy of the script that has those two lines changed. CI also reads the toolchain from the root `rust-toolchain.toml` (1.95), while this extension needs 1.99 (`extensions/figcraft/rust-toolchain.toml`).
+The pinned FigCraft rev uses `u64::isolate_lowest_one`, which is unstable on Rust 1.95 and 1.96, although FigCraft's `rust-version` says 1.95. `extensions/figcraft/rust-toolchain.toml` pins 1.99, which rustup picks up for any command run in this folder. The root `rust-toolchain.toml` (1.95) still applies to the other extensions and to the CI setup step, which installs 1.95 first and then installs 1.99 on the first Cargo call in this folder.
 
 ## Formats
 
