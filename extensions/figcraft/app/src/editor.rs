@@ -10,7 +10,7 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use band_editor::Editor;
+use band_editor::{Editor, Layout, Rect, Selection};
 use base64::Engine as _;
 use figcraft_doc::Document;
 use figcraft_ui_egui::{FigApp, control};
@@ -46,12 +46,26 @@ pub struct FigcraftEditor {
     failed: bool,
     /// The document as of each `save` that Band has not answered yet, oldest first.
     sent: VecDeque<Arc<Document>>,
+    /// The panels as they were before the compact layout, restored by the regular one:
+    /// `left_collapsed` and `ui_minimized`.
+    regular_ui: Option<(bool, bool)>,
 }
 
 impl FigcraftEditor {
     pub fn new(app: Rc<RefCell<FigApp>>, ctx: egui::Context, want_save: Rc<Cell<bool>>) -> Self {
         let mcp = McpHost::new(app.clone(), ctx.clone(), want_save.clone());
-        Self { app, ctx, mcp, format: Format::Figcraft, name: String::new(), want_save, broken: false, failed: false, sent: VecDeque::new() }
+        Self {
+            app,
+            ctx,
+            mcp,
+            format: Format::Figcraft,
+            name: String::new(),
+            want_save,
+            broken: false,
+            failed: false,
+            sent: VecDeque::new(),
+            regular_ui: None,
+        }
     }
 
     /// Close every tab and open `bytes` as the only one.
@@ -146,5 +160,48 @@ impl Editor for FigcraftEditor {
 
     fn mcp(&mut self, requests: Vec<String>) -> Vec<String> {
         self.mcp.frame(requests)
+    }
+
+    /// FigCraft already shows one side panel at a time in a window narrower than `NARROW_WIDTH`.
+    /// Compact also closes the open panel and minimizes the interface (the toolbar stays), so a wide
+    /// frame such as an iPad gets the same canvas-first layout.
+    fn set_layout(&mut self, layout: Layout) {
+        let Ok(mut app) = self.app.try_borrow_mut() else { return };
+        if layout.is_compact() {
+            if self.regular_ui.is_none() {
+                let minimized = app.session.ds().is_ok_and(|d| d.view.ui_minimized);
+                self.regular_ui = Some((app.ui.left_collapsed, minimized));
+            }
+            app.ui.close_left_panel();
+            app.ui.mobile_panel = None;
+            let _ = app.session.execute("view.minimize", &json!({"on": true}));
+        } else if let Some((left_collapsed, minimized)) = self.regular_ui.take() {
+            app.ui.left_collapsed = left_collapsed;
+            let _ = app.session.execute("view.minimize", &json!({"on": minimized}));
+        }
+        self.ctx.request_repaint();
+    }
+
+    /// The first selected node, addressed by the id every FigCraft tool takes (`get_node`, `create_node`
+    /// parents, `execute` commands).
+    fn selection(&mut self) -> Option<Selection> {
+        let app = self.app.try_borrow().ok()?;
+        let ds = app.session.ds().ok()?;
+        let id = *ds.selection.first()?;
+        let node = ds.doc.node(id)?;
+        let name = if node.name.is_empty() { node.kind.type_name().to_string() } else { node.name.clone() };
+        let mut label = name;
+        if ds.selection.len() > 1 {
+            label.push_str(&format!(" and {} more", ds.selection.len() - 1));
+        }
+        let kind = if node.kind.text().is_some() { "text" } else { "node" };
+        let mut selection = Selection::new(id.to_string(), kind, label);
+        if let Some(text) = node.kind.text() {
+            selection = selection.with_text(text.characters.clone());
+        }
+        if let Some(b) = ds.doc.world_bounds(id) {
+            selection = selection.with_rect(Rect { x: b.x0, y: b.y0, width: b.x1 - b.x0, height: b.y1 - b.y0 });
+        }
+        Some(selection)
     }
 }

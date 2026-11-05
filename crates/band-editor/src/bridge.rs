@@ -7,12 +7,17 @@
 //! script in the app's `index.html` applies the same checks and keeps the port of a hello that
 //! arrives before the wasm has loaded (it stores the port as `window.bandHelloPort`).
 //!
-//! Band to editor: `init { file: { name, path, mime, bytes, readOnly }, theme }`,
+//! Band to editor: `init { file: { name, path, mime, bytes, readOnly }, theme, layout? }`,
 //! `requestSave`, `saved`, `saveFailed { error }`, `reload { bytes }`, `theme { tokens }`
-//! (ignored) and `mcp { message }`.
+//! (ignored), `layout { layout }` (`"compact"` or `"regular"`) and `mcp { message }`.
 //!
 //! Editor to Band: `ready` (the file from `init` is open), `dirty { dirty }`,
-//! `save { bytes }` (a transferred `ArrayBuffer`) and `mcp { message }` with the request's id.
+//! `save { bytes }` (a transferred `ArrayBuffer`), `selection { selection }` (a [`Selection`], or
+//! `null` when nothing is selected, sent once the selection has stayed the same for 250 ms) and
+//! `mcp { message }` with the request's id.
+//!
+//! Both additions are optional: an `init` without `layout` leaves the editor in its regular
+//! layout, and Band ignores a `selection` it does not know.
 //!
 //! The app implements [`Editor`]. [`Bridge::sync`] runs once per frame, after the app has drawn
 //! and with no borrow of the app held.
@@ -24,7 +29,13 @@ use wasm_bindgen::JsCast as _;
 use wasm_bindgen::JsValue;
 use wasm_bindgen::closure::Closure;
 
+use crate::protocol::{Layout, Selection};
+use crate::touch::TouchShim;
+
 const EXTENSION_API: f64 = 1.0;
+
+/// How long a selection must stay the same before it is sent, in milliseconds.
+const SELECTION_DEBOUNCE_MS: f64 = 250.0;
 
 /// What the bridge needs from an app. Every method runs on the frame loop.
 pub trait Editor {
@@ -58,6 +69,19 @@ pub trait Editor {
     /// Called every frame, with an empty slice when nothing arrived, so a tool that finishes over
     /// several frames (a screenshot) can answer later.
     fn mcp(&mut self, requests: Vec<String>) -> Vec<String>;
+
+    /// Band asks for the compact layout (a phone-width page or the iOS app) or the regular one.
+    /// Hide ribbons, toolbars and side panels and size the interface for touch when compact, and
+    /// restore the normal interface when regular. Called only when Band sent a layout, and again
+    /// each time it changes. The default ignores it.
+    fn set_layout(&mut self, _layout: Layout) {}
+
+    /// What the person has selected now, or `None` when nothing is. Called every frame, so keep
+    /// it cheap; the bridge compares the value with what it last sent and sends only a change.
+    /// The default reports no selection.
+    fn selection(&mut self) -> Option<Selection> {
+        None
+    }
 }
 
 #[derive(Clone, Default)]
@@ -76,6 +100,14 @@ struct Inner {
     awaiting_ready: std::cell::Cell<bool>,
     /// The unsaved-changes state last reported to Band.
     reported: std::cell::Cell<bool>,
+    /// The selection last sent to Band; `None` when Band was told nothing is selected.
+    sent_selection: RefCell<Option<Selection>>,
+    /// A selection that differs from `sent_selection`, and the time it was first seen.
+    pending_selection: RefCell<Option<(Option<Selection>, f64)>>,
+    /// A timer is set that draws a frame when the pending selection is due.
+    selection_timer: std::cell::Cell<bool>,
+    /// One-finger scrolling while the layout is compact.
+    touch: RefCell<Option<TouchShim>>,
 }
 
 impl Bridge {
@@ -87,6 +119,7 @@ impl Bridge {
             return None;
         }
         let bridge = Self::default();
+        *bridge.0.touch.borrow_mut() = TouchShim::install();
         let this = bridge.clone();
         let on_message = Closure::<dyn FnMut(web_sys::MessageEvent)>::new(move |event: web_sys::MessageEvent| {
             if !event.source().is_some_and(|s| js_sys::Object::is(&s, &parent)) {
@@ -158,6 +191,7 @@ impl Bridge {
                 Some("requestSave") => want_save = true,
                 Some("saved") => editor.save_answered(true),
                 Some("saveFailed") => editor.save_answered(false),
+                Some("layout") => self.layout(editor, &event),
                 _ => {}
             }
         }
@@ -174,6 +208,69 @@ impl Bridge {
         if inner.reported.get() != dirty && self.send(&[("type", "dirty".into()), ("dirty", dirty.into())], None) {
             inner.reported.set(dirty);
         }
+        self.sync_selection(editor);
+    }
+
+    /// Send the selection when it has changed and stayed the same for the debounce time.
+    fn sync_selection(&self, editor: &mut dyn Editor) {
+        let inner = &self.0;
+        if inner.port.borrow().is_none() {
+            return;
+        }
+        let current = editor.selection().map(Selection::capped);
+        if *inner.sent_selection.borrow() == current {
+            *inner.pending_selection.borrow_mut() = None;
+            return;
+        }
+        let now = js_sys::Date::now();
+        let since = match &*inner.pending_selection.borrow() {
+            Some((pending, since)) if *pending == current => *since,
+            _ => now,
+        };
+        if now - since < SELECTION_DEBOUNCE_MS {
+            *inner.pending_selection.borrow_mut() = Some((current, since));
+            self.draw_frame_in(SELECTION_DEBOUNCE_MS - (now - since));
+            return;
+        }
+        *inner.pending_selection.borrow_mut() = None;
+        let value = match &current {
+            Some(selection) => js_sys::JSON::parse(&selection.to_json().to_string()).unwrap_or(JsValue::NULL),
+            None => JsValue::NULL,
+        };
+        if self.send(&[("type", "selection".into()), ("selection", value)], None) {
+            *inner.sent_selection.borrow_mut() = current;
+        }
+    }
+
+    /// Draw a frame after `ms` milliseconds, so a due selection is sent even if nothing else wakes the app.
+    fn draw_frame_in(&self, ms: f64) {
+        let inner = &self.0;
+        let Some(window) = web_sys::window() else { return };
+        if inner.selection_timer.replace(true) {
+            return;
+        }
+        let this = self.clone();
+        let wake = Closure::once_into_js(move || {
+            this.0.selection_timer.set(false);
+            if let Some(repaint) = &*this.0.repaint.borrow() {
+                repaint();
+            }
+        });
+        if window.set_timeout_with_callback_and_timeout_and_arguments_0(wake.unchecked_ref(), ms.ceil() as i32 + 1).is_err() {
+            inner.selection_timer.set(false);
+        }
+    }
+
+    fn layout(&self, editor: &mut dyn Editor, event: &JsValue) {
+        let Some(layout) = get(event, "layout").as_string().as_deref().and_then(Layout::parse) else { return };
+        if let Some(touch) = &*self.0.touch.borrow() {
+            touch.set_enabled(layout.is_compact());
+        }
+        editor.set_layout(layout);
+        // The change shows on the next frame.
+        if let Some(repaint) = &*self.0.repaint.borrow() {
+            repaint();
+        }
     }
 
     fn init(&self, editor: &mut dyn Editor, event: &JsValue) {
@@ -183,6 +280,8 @@ impl Bridge {
             log("init carried no bytes");
             return;
         };
+        // A layout in `init` is applied before the file opens, so the first frame is already compact.
+        self.layout(editor, event);
         editor.open(&name, bytes);
         self.0.awaiting_ready.set(true);
     }

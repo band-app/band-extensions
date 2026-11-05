@@ -10,6 +10,7 @@ import { createServer } from "node:http";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { extname, join } from "node:path";
 import { createRequire } from "node:module";
+import { compactScenarios } from "../../scripts/verify-compact.mjs";
 
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT ?? "playwright-core");
@@ -318,6 +319,28 @@ try {
     const names = await layerNames(page, id);
     check("S1-forged-b", names.length > 0 && !names.includes("evil"), names.slice(0, 5).join(", "));
     await page.close();
+  }
+
+  // Compact layout, touch and selection (shared scenarios in scripts/verify-compact.mjs).
+  {
+    await compactScenarios(
+      { browser, pageUrl, out, check, sleep, waitLog, logOf, call: (page, id, name, args) => call(page, id, name, args), text },
+      {
+        ext: "figcraft",
+        s1Size: [900, 700],
+        minChange: 0.02,
+        file: { name: "seed.figcraft", bytes: figcraft },
+        tap: [25, 340],
+        // A tap on empty canvas does not deselect in FigCraft, so the test runs its Select none command.
+        clear: async (page, id) => call(page, id, "run_command", { command: "select.none", params: {} }),
+        drag: { from: [300, 700], to: [100, 600] },
+        wantSelection: (s) => (/^[0-9]+$/.test(s.address) && ["node", "text"].includes(s.kind) ? null : `unexpected address/kind ${s.address} ${s.kind}`),
+        useAddress: async ({ page, id, selection, call, text }) => {
+          const got = text(await call(page, id, "get_node", { id: Number(selection.address) }));
+          return { ok: got.includes(selection.label.split(" and ")[0]) || /"id"/.test(got), detail: `get_node ${selection.address} -> ${got.slice(0, 120)}` };
+        },
+      },
+    );
   }
 } catch (e) {
   console.log("ERROR", e);

@@ -10,6 +10,7 @@ import { createServer } from "node:http";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { extname, join } from "node:path";
 import { createRequire } from "node:module";
+import { compactScenarios } from "../../scripts/verify-compact.mjs";
 
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT ?? "playwright-core");
@@ -372,6 +373,32 @@ try {
     const t = await waitText(page, id, /realword/);
     check("forged-real-hello", /realword/.test(t), t.slice(0, 80));
     await page.close();
+  }
+
+  // Compact layout, touch and selection (shared scenarios in scripts/verify-compact.mjs).
+  {
+    const words = Array.from({ length: 90 }, (_, i) => `Paragraph number ${i + 1} of the compact test document.`).join("</w:t></w:r></w:p><w:p><w:r><w:t>");
+    await compactScenarios(
+      { browser, pageUrl, out, check, sleep, waitLog, logOf, call: (page, id, name, args) => call(page, id, name, args), text },
+      {
+        ext: "wordcraft",
+        file: { name: "long.docx", bytes: docx(words) },
+        tap: [150, 300],
+        noNull: true,
+        tap2: [150, 400],
+        drag: { from: [200, 700], to: [200, 300] },
+        wantSelection: (s) => (["paragraph", "text"].includes(s.kind) && (() => { try { const a = JSON.parse(s.address); return !!a.anchor && !!a.focus; } catch { return false; } })() ? null : `unexpected address/kind ${s.address} ${s.kind}`),
+        useAddress: async ({ page, id, selection, call, text }) => {
+          // The address is select.range's parameters: running it restores the selection.
+          await call(page, id, "execute", { command: "select.collapse", params: {} });
+          await call(page, id, "execute", { command: "select.range", params: JSON.parse(selection.address) });
+          const back = JSON.stringify((await call(page, id, "inspect_document", {})).content.map((c) => c.text));
+          const sel = JSON.parse(selection.address);
+          const ok = back.includes(`\\"off\\":${sel.focus.off}`) || back.includes("selection");
+          return { ok, detail: `select.range ${selection.address.slice(0, 80)} ran and inspect_document reports a selection` };
+        },
+      },
+    );
   }
 } catch (e) {
   console.log("ERROR", e);

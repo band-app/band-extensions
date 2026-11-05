@@ -11,7 +11,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::rc::Rc;
 use std::sync::mpsc::Sender;
 
-use band_editor::Editor;
+use band_editor::{Editor, Layout, Selection};
 use serde_json::json;
 use wordcraft_ui_egui::control::ControlRequest;
 use wordcraft_ui_egui::{Inbox, Services, WordApp};
@@ -36,7 +36,20 @@ pub struct WordcraftEditor {
     route: SaveRoute,
     /// A hash of the bytes of each `save` that Band has not answered yet, oldest first.
     sent: VecDeque<u64>,
+    /// The interface as it was before the compact layout, restored by the regular one.
+    regular_ui: Option<RegularUi>,
 }
+
+/// The interface settings the compact layout changes.
+struct RegularUi {
+    ribbon_collapsed: bool,
+    quick_access_toolbar: bool,
+    nav_pane: bool,
+    interface_size: wordcraft_ui_egui::theme::InterfaceSize,
+}
+
+/// Interface size in percent while compact.
+const COMPACT_SCALE_PERCENT: f64 = 125.0;
 
 fn extension(name: &str) -> String {
     name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default()
@@ -70,7 +83,7 @@ impl WordcraftEditor {
 
     pub fn new(app: Rc<RefCell<WordApp>>, inbox: Inbox, ctx: egui::Context, route: SaveRoute, control: Sender<ControlRequest>) -> Self {
         let mcp = McpHost::new(app.clone(), ctx.clone(), control);
-        Self { app, inbox, ctx, mcp, name: "Document.docx".to_string(), route, sent: VecDeque::new() }
+        Self { app, inbox, ctx, mcp, name: "Document.docx".to_string(), route, sent: VecDeque::new(), regular_ui: None }
     }
 
     fn push_to_inbox(&self, name: String, bytes: Vec<u8>) {
@@ -145,5 +158,58 @@ impl Editor for WordcraftEditor {
 
     fn mcp(&mut self, requests: Vec<String>) -> Vec<String> {
         self.mcp.frame(&self.ctx, requests)
+    }
+
+    fn set_layout(&mut self, layout: Layout) {
+        let Ok(mut app) = self.app.try_borrow_mut() else { return };
+        if layout.is_compact() {
+            if self.regular_ui.is_none() {
+                self.regular_ui = Some(RegularUi {
+                    ribbon_collapsed: app.ui.ribbon_collapsed,
+                    quick_access_toolbar: app.ui.quick_access_toolbar,
+                    nav_pane: app.ui.nav_pane,
+                    interface_size: app.ui.interface_size,
+                });
+            }
+            app.ui.ribbon_collapsed = true;
+            app.ui.quick_access_toolbar = false;
+            app.ui.nav_pane = false;
+            if let Some(size) = wordcraft_ui_egui::theme::InterfaceSize::from_percent(COMPACT_SCALE_PERCENT) {
+                app.ui.interface_size = size;
+            }
+        } else if let Some(regular) = self.regular_ui.take() {
+            app.ui.ribbon_collapsed = regular.ribbon_collapsed;
+            app.ui.quick_access_toolbar = regular.quick_access_toolbar;
+            app.ui.nav_pane = regular.nav_pane;
+            app.ui.interface_size = regular.interface_size;
+        }
+        self.ctx.request_repaint();
+    }
+
+    /// The selection as WordCraft's own `select.range` parameters, `{"anchor": Pos, "focus": Pos}`: an
+    /// agent restores it with `execute select.range <address>`, after which `type_text` replaces it
+    /// and `execute` formatting commands act on it. A caret with nothing selected is a `paragraph`
+    /// (`select.paragraph` selects the paragraph around it); selected text is `text`.
+    fn selection(&mut self) -> Option<Selection> {
+        let app = self.app.try_borrow().ok()?;
+        let session = &app.session;
+        if session.documents().is_empty() {
+            return None;
+        }
+        let sel = &session.sel;
+        let address = serde_json::to_string(sel).ok()?;
+        let block =
+            if sel.focus.story == wordcraft_doc::StoryRef::Body { Some(sel.focus.path.0.first().copied().unwrap_or(0) as usize + 1) } else { None };
+        let place = block.map_or("a note, header or footer".to_string(), |n| format!("paragraph {n}"));
+        if sel.is_collapsed() {
+            return Some(Selection::new(address, "paragraph", format!("Caret in {place}")));
+        }
+        let text = session.selected_text();
+        let mut preview: String = text.chars().take(40).collect();
+        if text.chars().count() > 40 {
+            preview.push('…');
+        }
+        let preview = preview.replace('\n', " ");
+        Some(Selection::new(address, "text", format!("\"{preview}\" in {place}")).with_text(text))
     }
 }

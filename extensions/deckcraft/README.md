@@ -53,3 +53,7 @@ A frame scrolled out of view or in a background tab stops drawing, and MCP reque
 2. Diff `apps/deckcraft-web/src/{main,web}.rs`, `index.html` and `Trunk.toml` between the old and new rev, and port the changes into the copies. `presenter.rs` upstream is not used here.
 3. Replace `Cargo.lock` with DeckCraft's at the new rev, then `cargo update -p` as needed. Copy the `[patch.crates-io]` section and keep `egui`, `eframe`, `rfd` and `image` in sync with DeckCraft's `[workspace.dependencies]`. If `wasm-bindgen` changes, CI follows the new lock version by itself.
 4. Bump `version` in `band-extension.json` (the first three parts follow DeckCraft, the last is this wrapper's revision), then tag.
+
+## Compact layout and selection
+
+`DeckcraftEditor::set_layout` collapses the ribbon, closes the task pane and notes, and sets the slide list to its narrowest width (150 points). `selection` reports the first selected shape as `slide<index>!<shape id>`, with the shape's text, or the selected text when a range inside it is selected. `inspect_slide {index}` lists the shape with that id. The protocol is described in the [root README](../../README.md#compact-layout-and-selection), and `verify.mjs` runs the shared scenarios from `scripts/verify-compact.mjs`.

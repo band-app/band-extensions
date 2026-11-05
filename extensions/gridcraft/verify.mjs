@@ -10,6 +10,7 @@ import { createServer } from "node:http";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { extname, join } from "node:path";
 import { createRequire } from "node:module";
+import { compactScenarios } from "../../scripts/verify-compact.mjs";
 
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT ?? "playwright-core");
@@ -298,6 +299,29 @@ try {
     const cells = text(await call(page, id, "read_range", { range: "A1:B3" }));
     check("S6b", /apple/.test(cells) && !/evil/.test(cells), cells.slice(0, 100));
     await page.close();
+  }
+
+  // S7 to S10: compact layout, touch, selection (shared scenarios in scripts/verify-compact.mjs).
+  {
+    const rows = ["fruit,qty"];
+    for (let i = 1; i <= 120; i++) rows.push(`item${i},${i * 3}`);
+    await compactScenarios(
+      { browser, pageUrl, out, check, sleep, waitLog, logOf, call: (page, id, name, args) => call(page, id, name, args), text },
+      {
+        ext: "gridcraft",
+        file: { name: "long.csv", bytes: Buffer.from(rows.join("\n") + "\n") },
+        tap: [200, 190],
+        // A workbook always has an active cell, so the selection is replaced, never cleared.
+        noNull: true,
+        tap2: [320, 260],
+        drag: { from: [200, 600], to: [200, 200] },
+        wantSelection: (s) => (/^[A-Za-z0-9_']+!?[A-Z]+[0-9]+/.test(s.address) && ["cell", "range"].includes(s.kind) ? null : `unexpected address/kind ${s.address} ${s.kind}`),
+        useAddress: async ({ page, id, selection, call, text }) => {
+          const got = text(await call(page, id, "read_range", { range: selection.address }));
+          return { ok: /item|qty|fruit|\d/.test(got) && got.length > 0, detail: `read_range ${selection.address} -> ${got.slice(0, 100)}` };
+        },
+      },
+    );
   }
 } catch (e) {
   console.log("ERROR", e);
