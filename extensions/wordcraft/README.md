@@ -61,3 +61,7 @@ WordCraft's official builds embed translations and proofing data from `storytold
 2. Diff `apps/wordcraft-web/src/{main,web}.rs`, `index.html` and `Trunk.toml` between the old and new rev, and port the changes into the copies. Copy the `[patch.crates-io]` block and the `egui`, `eframe` and `rfd` versions from WordCraft's `Cargo.toml`.
 3. Replace `Cargo.lock` with WordCraft's at the new rev, then run a build so Cargo adds this workspace's packages. If `wasm-bindgen` changes, CI follows the new lock version by itself.
 4. Bump `version` in `band-extension.json` (the first three parts follow WordCraft, the last is this wrapper's revision), then tag.
+
+## Compact layout and selection
+
+`WordcraftEditor::set_layout` collapses the ribbon, hides the quick access toolbar and navigation pane and sets the interface to 125%. `selection` reports `session.sel` as JSON (`{"anchor": Pos, "focus": Pos}`), which is the parameter object of `execute select.range`. A caret is a `paragraph` selection with no text, and selected text is a `text` selection. The protocol is described in the [root README](../../README.md#compact-layout-and-selection), and `verify.mjs` runs the shared scenarios from `scripts/verify-compact.mjs`.

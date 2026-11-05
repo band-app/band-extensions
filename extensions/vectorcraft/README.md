@@ -66,3 +66,7 @@ Data Recovery is gone: it kept copies in browser storage and Web Locks, which a 
 ## Measured costs
 
 Release build, rev `1008166fa7c6`: wasm 83.5 MB raw, about 29 MB gzip -9 (the tarball is 75 MB with the `.gz` and `.br` copies). From `band:hello` to `ready` takes 0.4 s once the wasm is cached by the test server. A cold release build takes about 12 minutes on Apple silicon.
+
+## Compact layout and selection
+
+`VectorcraftEditor::set_layout` switches to VectorCraft's own Touch workspace (`window.workspace`) and switches back to the previous workspace on `regular`. `selection` reports the first selected object by node id. The web build has no MCP tools, so `verify.mjs` checks the id against `document.inspect` on the control channel. The protocol is described in the [root README](../../README.md#compact-layout-and-selection), and `verify.mjs` runs the shared scenarios from `scripts/verify-compact.mjs`.

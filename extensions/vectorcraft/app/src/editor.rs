@@ -11,7 +11,7 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use band_editor::Editor;
+use band_editor::{Editor, Layout, Rect, Selection};
 use serde_json::json;
 use vectorcraft_ui_egui::Services;
 use vectorcraft_ui_egui::VectorcraftApp;
@@ -66,11 +66,27 @@ pub struct VectorcraftEditor {
     baseline: RefCell<Option<Arc<vectorcraft_doc::Document>>>,
     /// The document as of each `save` that Band has not answered yet, oldest first.
     sent: VecDeque<Arc<vectorcraft_doc::Document>>,
+    /// The workspace that was active before the compact layout, restored by the regular one.
+    regular_workspace: Option<String>,
 }
+
+/// VectorCraft's built-in workspace for touch: no toolbar clutter, bigger controls. The app picks it
+/// itself when it sees a touch screen, so compact uses the same one on every device.
+const TOUCH_WORKSPACE: &str = "Touch";
 
 impl VectorcraftEditor {
     pub fn new(app: SharedApp, inbox: Inbox, ctx: egui::Context, hook: Rc<SaveHook>) -> Self {
-        Self { app, inbox, ctx, hook, name: RefCell::new(String::new()), uid: Cell::new(None), baseline: RefCell::new(None), sent: VecDeque::new() }
+        Self {
+            app,
+            inbox,
+            ctx,
+            hook,
+            name: RefCell::new(String::new()),
+            uid: Cell::new(None),
+            baseline: RefCell::new(None),
+            sent: VecDeque::new(),
+            regular_workspace: None,
+        }
     }
 
     fn push_to_inbox(&self, name: String, bytes: Vec<u8>) {
@@ -190,6 +206,44 @@ impl Editor for VectorcraftEditor {
         {
             doc.mark_saved_as(&snapshot);
         }
+    }
+
+    fn set_layout(&mut self, layout: Layout) {
+        let Ok(mut guard) = self.app.try_borrow_mut() else { return };
+        let Some(app) = guard.as_mut() else { return };
+        if layout.is_compact() {
+            if self.regular_workspace.is_none() {
+                self.regular_workspace = Some(app.ui.workspace.clone());
+            }
+            if let Err(e) = app.run("window.workspace", json!({"name": TOUCH_WORKSPACE})) {
+                log::warn!("couldn't switch to the {TOUCH_WORKSPACE} workspace: {e}");
+            }
+        } else if let Some(name) = self.regular_workspace.take()
+            && let Err(e) = app.run("window.workspace", json!({"name": name}))
+        {
+            log::warn!("couldn't switch back to the {name} workspace: {e}");
+        }
+        self.ctx.request_repaint();
+    }
+
+    /// The first selected object, addressed by its node id: the `id` VectorCraft's control channel
+    /// (`window.vectorcraft.execute`) and engine commands take. The web build lists no MCP tools.
+    fn selection(&mut self) -> Option<Selection> {
+        let uid = self.uid.get()?;
+        let guard = self.app.try_borrow().ok()?;
+        let app = guard.as_ref()?;
+        let doc = app.session.documents().iter().find(|d| d.uid == uid)?;
+        let id = *doc.selection.objects.first()?;
+        let node = doc.doc.node(id)?;
+        let mut label = node.display_name();
+        if doc.selection.objects.len() > 1 {
+            label.push_str(&format!(" and {} more", doc.selection.objects.len() - 1));
+        }
+        let mut selection = Selection::new(id.0.to_string(), "element", label);
+        if let Some(b) = doc.doc.bounds_of(&doc.selection.objects, false) {
+            selection = selection.with_rect(Rect { x: b.x0, y: b.y0, width: b.x1 - b.x0, height: b.y1 - b.y0 });
+        }
+        Some(selection)
     }
 
     /// `tools.json` lists no tools, so Band should send none. A request that arrives anyway gets

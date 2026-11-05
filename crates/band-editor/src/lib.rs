@@ -7,7 +7,11 @@
 
 #[cfg(target_arch = "wasm32")]
 mod bridge;
+pub mod protocol;
 pub mod tools_json;
+#[cfg(target_arch = "wasm32")]
+mod touch;
 
 #[cfg(target_arch = "wasm32")]
 pub use bridge::{Bridge, Editor, message_text};
+pub use protocol::{Layout, Rect, Selection};

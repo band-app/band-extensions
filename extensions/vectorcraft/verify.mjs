@@ -12,6 +12,7 @@ import { createServer } from "node:http";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { extname, join } from "node:path";
 import { createRequire } from "node:module";
+import { compactScenarios } from "../../scripts/verify-compact.mjs";
 import { gunzipSync, gzipSync } from "node:zlib";
 
 const require = createRequire(import.meta.url);
@@ -296,6 +297,29 @@ try {
     await sleep(1500);
     check("S6b", (await nodes(page)) > 0, "the real hello still works afterwards");
     await page.close();
+  }
+
+  // Compact layout, touch and selection (shared scenarios in scripts/verify-compact.mjs). The web build
+  // lists no MCP tools, so the address is checked against the control channel instead.
+  {
+    await compactScenarios(
+      { browser, pageUrl, out, check, sleep, waitLog, logOf, call: null, text: null },
+      {
+        ext: "vectorcraft",
+        noLayoutTolerance: 0.15,
+        file: { name: "drawing.svg", bytes: svg },
+        tap: [137, 440],
+        clear: [60, 750],
+        drag: { from: [300, 700], to: [250, 680] },
+        wantSelection: (s) => (/^[0-9]+$/.test(s.address) && s.kind === "element" ? null : `unexpected address/kind ${s.address} ${s.kind}`),
+        useAddress: async ({ page, selection }) => {
+          const inspected = JSON.stringify(await inFrame(page, () => window.vectorcraft.request("document.inspect", {})));
+          const sel = JSON.parse(inspected).selection;
+          const ok = JSON.stringify(sel).includes(selection.address);
+          return { ok, detail: `document.inspect selection ${JSON.stringify(sel).slice(0, 100)} holds node ${selection.address}` };
+        },
+      },
+    );
   }
 } catch (e) {
   console.log("ERROR", e);

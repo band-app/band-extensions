@@ -73,3 +73,7 @@ A frame scrolled out of view or in a background tab stops drawing, and MCP reque
 2. Diff `apps/figcraft-web/src/*.rs`, `index.html` and `Trunk.toml` between the old and new rev, and port the changes into the copies.
 3. Copy FigCraft's `[patch.crates-io]`, `[profile.*]`, `[workspace.lints]` and the egui, eframe versions from its root `Cargo.toml`. Replace `Cargo.lock` with FigCraft's at the new rev, then `cargo update -p` as needed. If `wasm-bindgen` changes, CI follows the new lock version by itself.
 4. Bump `version` in `band-extension.json` (the first three parts follow FigCraft, the last is this wrapper's revision), then tag.
+
+## Compact layout and selection
+
+`FigcraftEditor::set_layout` closes the left panel and minimizes the interface (`view.minimize`). FigCraft already shows one side panel at a time below its narrow width, so at 390 pixels compact looks like regular, and `verify.mjs` checks the difference in a 900 pixel frame. `selection` reports the first selected node by the id `get_node` takes, with its text for a text node. The protocol is described in the [root README](../../README.md#compact-layout-and-selection), and `verify.mjs` runs the shared scenarios from `scripts/verify-compact.mjs`.

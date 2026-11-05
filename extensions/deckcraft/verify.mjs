@@ -10,6 +10,7 @@ import { createServer } from "node:http";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { extname, join } from "node:path";
 import { createRequire } from "node:module";
+import { compactScenarios } from "../../scripts/verify-compact.mjs";
 
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT ?? "playwright-core");
@@ -278,6 +279,31 @@ try {
     const doc = text(await call(page, id, "inspect_document", {}));
     check("forged-real-hello", /slides/i.test(doc) && !/evil/.test(doc), doc.slice(0, 100));
     await page.close();
+  }
+
+  // Compact layout, touch and selection (shared scenarios in scripts/verify-compact.mjs).
+  {
+    await compactScenarios(
+      { browser, pageUrl, out, check, sleep, waitLog, logOf, call: (page, id, name, args) => call(page, id, name, args), text },
+      {
+        ext: "deckcraft",
+        minChange: 0.015,
+        prepare: ({ page, id, call }) => call(page, id, "call_app", { method: "ui.set", params: { zoom: 0.6 } }),
+        restore: ({ page, id, call }) => call(page, id, "call_app", { method: "ui.set", params: { zoom: null } }),
+        file: { name: "sample.pptx", bytes: readFileSync(fixture) },
+        tap: [270, 437],
+        clear: [250, 700],
+        drag: { from: [340, 700], to: [200, 700] },
+        wantSelection: (s) => (/^slide[0-9]+![0-9]+$/.test(s.address) && ["shape", "text"].includes(s.kind) ? null : `unexpected address/kind ${s.address} ${s.kind}`),
+        useAddress: async ({ page, id, selection, call, text }) => {
+          // slide<index>!<shape id>: go to the slide, then read it; the shape id must be on that slide.
+          const [, slide, shape] = /^slide([0-9]+)!([0-9]+)$/.exec(selection.address);
+          const got = text(await call(page, id, "inspect_slide", { index: Number(slide) }));
+          const found = new RegExp(`"id":\\s*${shape}\\b`).test(got);
+          return { ok: found, detail: `inspect_slide ${slide} lists shape ${shape}: ${found}` };
+        },
+      },
+    );
   }
 } catch (e) {
   console.log("ERROR", e);
