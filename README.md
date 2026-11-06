@@ -56,10 +56,10 @@ extensions/<name>/      band-extension.json, NOTICE, README.md, verify.mjs, and 
                         <name>-band, Trunk.toml, index.html)
 scripts/package.sh      build, tools.json, compressed copies, tarball and checksum
 scripts/install.sh      package and unpack into a Band home
-scripts/check-tag.sh    checks a release tag against the manifest version
+scripts/next-versions.mjs  plans which extensions to release and their versions (tests: next-versions.test.mjs)
 scripts/catalog*.mjs    the catalog generator, Band's catalog schema (a copy) and their tests (npm test)
 extensions/<name>/catalog.json  the description and minBand the catalog lists
-.github/workflows/      ci.yml (pull requests and main), release.yml (tags) and catalog.yml (index.json)
+.github/workflows/      ci.yml (pull requests and main), release.yml (main) and catalog.yml (index.json)
 ```
 
 ## Compact layout and selection
@@ -93,9 +93,17 @@ Gaps that need a change in the upstream app:
 ## CI and releases
 
 - `ci.yml` runs on pull requests and on pushes to main. It builds only the extensions whose files changed under `extensions/<name>/`. A change to `crates/`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `rustfmt.toml`, `scripts/` or `.github/` builds all of them. A change to anything else, such as this README, builds nothing. Each build runs `cargo fmt --check`, clippy for native and wasm32, the tests, `scripts/package.sh`, and the extension's `verify.mjs` in headless Chrome with SwiftShader. The tarball is uploaded as an artifact. Require the `ci` job in branch protection: it passes when every build passed or none was needed.
-- `release.yml` runs on a tag `<ext>-v<version>`. It fails at once unless the version in the tag equals `version` in `extensions/<ext>/band-extension.json` (`scripts/check-tag.sh <tag>` runs the same check locally). Then it packages the extension and creates a GitHub release with the tarball and the `.sha256`. Started by hand with an extension name (Actions > Release > Run workflow), it builds the same files as an artifact and creates no release.
+- `release.yml` runs on every push to main and releases each extension whose code changed. `scripts/next-versions.mjs` finds the latest `<ext>-v*` release of each extension and decides:
+  - No release yet: the manifest version is released.
+  - The manifest version is above the latest release: it is released as written. This is how you ship a major bump.
+  - Otherwise, if a commit since the latest release touched `extensions/<ext>/`: a minor bump when any such commit title starts with `feat`, a patch bump for anything else. `feat!:` and `BREAKING CHANGE` do not bump the major version.
+  - Otherwise nothing. A change under `scripts/`, `crates/`, the root files or the README releases nothing. Merge a trivial change under the extension's folder to force a release.
 
-To release: bump `version` in the manifest, merge, then `git tag gridcraft-v<version> && git push origin gridcraft-v<version>`.
+  One run handles every extension that changed. It commits the new versions to main as `chore(release): gridcraft v0.7.2, wordcraft v0.15.2` (pushed with `GITHUB_TOKEN`, so it starts no workflow), builds each tarball from that commit, creates the release `<ext>-v<version>` with the tarball and `.sha256`, then regenerates the catalog once. Runs queue in the `release` concurrency group. If the push loses a race with another commit to main, the job rebases and pushes again. If main gets branch protection, the Actions bot needs a bypass for that push.
+
+  Versions are plain `MAJOR.MINOR.PATCH`, because the catalog accepts nothing else. To release 1.0.0, set `version` to `1.0.0` in the manifest and merge. Do not edit the version for routine fixes.
+
+  Started by hand (Actions > Release > Run workflow), the workflow is a dry run. It prints the plan, applies the versions in its own checkout, builds the tarballs as artifacts, and neither pushes nor releases. Locally, `node scripts/next-versions.mjs plan --releases releases.json` prints the plan from a JSON list of tag names (without `--releases` it asks `gh release list`), and `node --test scripts/next-versions.test.mjs` runs the tests.
 
 ## Add an extension
 
