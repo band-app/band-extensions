@@ -92,9 +92,10 @@ export const HUB_MAX_FPS = 15;
 const HUB_SCALE = 0.5;
 const HUB_JPEG_QUALITY = 70;
 
+/** Band sets `profile` on every stream. Anything but "direct" is treated as "hub", the cheaper one. */
 export function streamProfile(params: unknown): "hub" | "direct" {
   const profile = (params as { profile?: unknown } | null)?.profile;
-  return profile === "hub" ? "hub" : "direct";
+  return profile === "direct" ? "direct" : "hub";
 }
 
 /** Halves a JPEG with `sips`, which ships with macOS (the only system the simulator runs on). */

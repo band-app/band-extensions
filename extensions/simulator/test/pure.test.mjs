@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { config, setStateDir } from "../src/config.ts";
+import { ensureOpenShim, openShimScript } from "../src/shim.ts";
 import { compactTree } from "../src/servesim.ts";
 import { jpegSize, mjpegFrames, serveSimButton, streamProfile } from "../src/stream.ts";
 
@@ -61,7 +63,10 @@ describe("serve-sim stream parsing", () => {
     assert.equal(serveSimButton("SIDE_BUTTON"), "side_button");
     assert.throws(() => serveSimButton("POWER"), /must be one of/);
     assert.equal(streamProfile({ profile: "hub" }), "hub");
-    assert.equal(streamProfile({}), "direct");
+    assert.equal(streamProfile({ profile: "direct" }), "direct");
+    // A stream with no profile (or an unknown one) gets the cheaper half-size profile.
+    assert.equal(streamProfile({}), "hub");
+    assert.equal(streamProfile(null), "hub");
   });
 });
 
@@ -91,5 +96,50 @@ describe("config", () => {
         else process.env[k] = saved[k];
       }
     }
+  });
+});
+
+describe("the open shim", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sim-shim-"));
+  after(() => rmSync(dir, { recursive: true, force: true }));
+
+  // A stand-in for /usr/bin/open that records its arguments, one per line.
+  const fake = join(dir, "real-open");
+  const log = join(dir, "calls.log");
+  writeFileSync(fake, `#!/bin/sh\nprintf '%s\\n' "$*" >> "${log}"\n`, { mode: 0o755 });
+  const shim = join(dir, "open");
+  writeFileSync(shim, openShimScript(fake), { mode: 0o755 });
+  const calls = () => (existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : []);
+
+  it("turns `open -a Simulator` into `open -gj -a Simulator`", () => {
+    rmSync(log, { force: true });
+    execFileSync(shim, ["-a", "Simulator"]);
+    assert.deepEqual(calls(), ["-gj -a Simulator"]);
+  });
+
+  it("does the same when serve-sim passes arguments or names the app by path or bundle id", () => {
+    for (const args of [
+      ["-a", "Simulator", "--args", "-CurrentDeviceUDID", "X"],
+      ["/Applications/Xcode.app/Contents/Developer/Applications/Simulator.app"],
+      ["-b", "com.apple.iphonesimulator"],
+    ]) {
+      rmSync(log, { force: true });
+      execFileSync(shim, args);
+      assert.deepEqual(calls(), ["-gj -a Simulator"], args.join(" "));
+    }
+  });
+
+  it("passes every other call through unchanged", () => {
+    rmSync(log, { force: true });
+    execFileSync(shim, ["-a", "Safari", "https://example.com"]);
+    execFileSync(shim, ["-n", "/tmp/file.txt"]);
+    assert.deepEqual(calls(), ["-a Safari https://example.com", "-n /tmp/file.txt"]);
+  });
+
+  it("ensureOpenShim writes an executable open into the folder it is given", () => {
+    const where = join(dir, "state", "bin");
+    assert.equal(ensureOpenShim(where), where);
+    assert.equal(readFileSync(join(where, "open"), "utf8"), openShimScript());
+    assert.ok(statSync(join(where, "open")).mode & 0o100);
   });
 });

@@ -1,5 +1,7 @@
+import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { config } from "./config.ts";
+import { config, getStateDir } from "./config.ts";
+import { ensureOpenShim } from "./shim.ts";
 import { run } from "./tools.ts";
 
 /** One serve-sim helper: the process that captures a booted device and takes HID input for it. */
@@ -61,6 +63,17 @@ function childEnv(): NodeJS.ProcessEnv {
   for (const key of ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "USER", "DEVELOPER_DIR"]) {
     const value = process.env[key];
     if (value !== undefined) env[key] = value;
+  }
+  // serve-sim opens Simulator.app with `open -a Simulator`. The shim, first on PATH, keeps that
+  // window hidden and in the background: the Simulator tab is how a person sees the device.
+  if (process.platform === "darwin") {
+    let shimDir: string | null = null;
+    try {
+      shimDir = ensureOpenShim(join(getStateDir(), "bin"));
+    } catch {
+      // No state dir yet (the service runs outside a worker): the real `open` is used.
+    }
+    if (shimDir) env.PATH = `${shimDir}${delimiter}${env.PATH ?? ""}`;
   }
   return env;
 }
