@@ -1,0 +1,22 @@
+{
+  "name": "band-extension-simulator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The iOS simulator as a Band extension: a worker service, a panel and agent tools.",
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "serve-sim": "0.1.47",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.13",
+    "@types/ws": "^8.18.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0"
+  }
+}

@@ -1,0 +1,4 @@
+{
+  "description": "Open and edit presentations (.pptx) in a tab. Agents edit the open deck through DeckCraft's tools.",
+  "minBand": "0.61.0"
+}

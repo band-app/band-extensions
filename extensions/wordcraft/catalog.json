@@ -1,0 +1,4 @@
+{
+  "description": "Open and edit documents (.docx, .odt, .rtf) in a tab. Agents edit the open document through WordCraft's tools.",
+  "minBand": "0.61.0"
+}

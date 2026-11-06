@@ -1,0 +1,4 @@
+{
+  "description": "Open and edit spreadsheets (.xlsx, .csv) in a tab. Agents edit the open workbook through GridCraft's tools.",
+  "minBand": "0.61.0"
+}
