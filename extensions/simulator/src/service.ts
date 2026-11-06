@@ -4,7 +4,13 @@ import { DeviceSet, maxBooted } from "./devices.ts";
 import { getStateDir, setStateDir } from "./config.ts";
 import { defineWorkerService } from "./sdk/index.mjs";
 import { ServeSimHelpers } from "./servesim.ts";
-import { jpegSize, openScreenStream, type ScreenStream, serveSimButton } from "./stream.ts";
+import {
+  jpegSize,
+  ORIENTATIONS,
+  openScreenStream,
+  type ScreenStream,
+  serveSimButton,
+} from "./stream.ts";
 import { run } from "./tools.ts";
 
 function obj(params: unknown): Record<string, unknown> {
@@ -33,8 +39,9 @@ const MAX_IMAGE_BYTES = 4_500_000;
 
 /**
  * The simulator as a worker service. Every worktree gets one device named "Band – <worktree id>"
- * in the machine's default device set, where serve-sim can see it. Only devices with that name
- * prefix are ever touched.
+ * in the machine's default device set, where serve-sim can see it. The person may pick any other
+ * iOS device in the panel; the worktree's stream and agent tools then act on it. Band shuts down
+ * or deletes only its own devices, except for an explicit Power press on the device shown.
  */
 const devices = new DeviceSet();
 const helpers = new ServeSimHelpers();
@@ -47,7 +54,7 @@ defineWorkerService({
 
   calls: {
     async status(_params, { worktreeKey }) {
-      const device = await devices.exclusive(() => devices.ensureDevice(worktreeKey));
+      const device = await devices.exclusive(() => devices.current(worktreeKey));
       const screen = device.state === "Booted" ? await helpers.screen(device.udid) : null;
       return {
         udid: device.udid,
@@ -61,6 +68,41 @@ defineWorkerService({
     async boot(_params, { worktreeKey }) {
       const device = await devices.exclusive(() => devices.ensureBooted(worktreeKey));
       return { udid: device.udid, name: device.name, state: device.state };
+    },
+
+    /** Every available iOS device, for the panel's picker, with the one this worktree acts on marked. */
+    async devices(_params, { worktreeKey }) {
+      const current = await devices.exclusive(() => devices.current(worktreeKey));
+      const list = await devices.listAll();
+      return { current: current.udid, devices: list };
+    },
+
+    /** Makes a device the one the panel streams and the agent tools act on, for this worktree. */
+    async select(params, { worktreeKey }) {
+      const udid = str(params, "udid");
+      const device = await devices.exclusive(() => devices.select(worktreeKey, udid));
+      return { udid: device.udid, name: device.name, state: device.state };
+    },
+
+    /** Shuts down the device shown in the panel: the one this worktree acts on, nothing else. */
+    async shutdown(_params, { worktreeKey }) {
+      const device = await devices.exclusive(async () => {
+        const d = await devices.current(worktreeKey);
+        if (d.state !== "Shutdown") await devices.shutdown(d.udid);
+        return d;
+      });
+      return { udid: device.udid, name: device.name, state: "Shutdown" };
+    },
+
+    /** Turns the device to an orientation (portrait or landscape_left). */
+    async rotate(params, { worktreeKey }) {
+      const orientation = str(params, "orientation");
+      if (!ORIENTATIONS.includes(orientation)) {
+        throw new Error(`orientation must be one of ${ORIENTATIONS.join(", ")}`);
+      }
+      const device = await devices.exclusive(() => devices.ensureBooted(worktreeKey));
+      await helpers.rotate(device.udid, orientation);
+      return { ok: true };
     },
 
     /**
@@ -165,7 +207,7 @@ defineWorkerService({
     /**
      * The live screen. Messages to the viewer are one text `{"type":"info"}` and then one binary
      * JPEG per frame. Messages from the viewer are JSON: `touch`, `button`, `key` and `text`.
-     * Band drops them until the person takes control.
+     * The stream acts on the worktree's current device, so the panel reopens it after a pick.
      */
     screen(params, { worktreeKey }, stream) {
       // Band waits only a few seconds for stream.open to answer, and a first boot takes minutes

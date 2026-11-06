@@ -200,13 +200,21 @@ test("S4: frames render in the extension's iframe, input is ignored until Take c
 
   const sim = frameOf(page);
   // The first frame needs a cold boot of a clone of a new base device.
-  await expect(sim.getByTestId("sim-panel__status")).toHaveText("View only", { timeout: 600_000 });
+  await expect(sim.getByTestId("sim-panel__status")).toHaveText("Connected", { timeout: 600_000 });
   await expect(sim.getByTestId("sim-panel__device")).toHaveText(`${PREFIX} ${SEP} ${worktreeId}`);
   const canvas = sim.getByTestId("sim-panel__canvas");
   const size = await canvas.evaluate((c: HTMLCanvasElement) => ({ w: c.width, h: c.height }));
   expect(size.w).toBeGreaterThan(300);
   expect(size.h).toBeGreaterThan(size.w);
-  await page.screenshot({ path: join(SHOTS, "s4-1-view-only.png") });
+  // The toolbar: no Take control or Release above it, and icon-only buttons with labels.
+  await expect(page.getByRole("button", { name: /take control|release/i })).toHaveCount(0);
+  await expect(sim.getByTestId("sim-panel__picker-version")).toHaveText(/^iOS \d+/);
+  for (const id of ["rotate", "home", "power"]) {
+    const button = sim.getByTestId(`sim-panel__${id}`);
+    await expect(button).toHaveAttribute("aria-label", /.+/);
+    await expect(button).toHaveText("");
+  }
+  await page.screenshot({ path: join(SHOTS, "s5-toolbar.png") });
 
   // Put the device on its home screen (tools are the agent's path and need no control).
   await trpcMutateData(server.url, TOKEN, "extensions.panelCall", {
@@ -231,16 +239,7 @@ test("S4: frames render in the extension's iframe, input is ignored until Take c
     y: box.y + (safari.center.y / home.screen.height) * box.height,
   };
 
-  // View only: a click and keys on the screen do nothing to the device.
-  await page.mouse.click(at.x, at.y);
-  await canvas.press("a");
-  await page.waitForTimeout(3000);
-  expect((await describeScreen()).elements.some((e) => e.type === "Button" && e.label === "Safari")).toBe(true);
-  await expect(sim.getByTestId("sim-panel__status")).toHaveText("View only");
-
-  // Take control (Band's button above the frame): the same click now opens Safari.
-  await panel.takeControl();
-  await expect(sim.getByTestId("sim-panel__status")).toHaveText("Controlling");
+  // Input is on from the start: a click opens Safari with nothing pressed in Band's toolbar.
   await expect(sim.getByTestId("sim-panel__home")).toBeEnabled();
   await page.mouse.click(at.x, at.y);
   await expect
@@ -290,8 +289,10 @@ test("S4: frames render in the extension's iframe, input is ignored until Take c
     console.warn("[simulator e2e] Safari showed no address field in the accessibility tree; keys were not checked");
   }
 
-  // Releasing returns to view only: input is ignored again.
-  await panel.controlButton.click();
-  await expect(sim.getByTestId("sim-panel__status")).toHaveText("View only");
-  await expect(sim.getByTestId("sim-panel__home")).toBeDisabled();
+  // Power shuts the device down and the panel says so; pressing it again boots it and the stream resumes.
+  await sim.getByTestId("sim-panel__power").click();
+  await expect(sim.getByTestId("sim-panel__status")).toHaveText("Off", { timeout: 60_000 });
+  await page.screenshot({ path: join(SHOTS, "s7-off.png") });
+  await sim.getByTestId("sim-panel__power").click();
+  await expect(sim.getByTestId("sim-panel__status")).toHaveText("Connected", { timeout: 300_000 });
 });

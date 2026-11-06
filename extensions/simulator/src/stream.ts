@@ -26,6 +26,9 @@ export function serveSimButton(name: string): string {
   return mapped;
 }
 
+/** The orientations the panel's Rotate button uses. */
+export const ORIENTATIONS = ["portrait", "landscape_left"];
+
 const KEY_USAGE: Record<string, number> = { Enter: 0x28, Backspace: 0x2a, Tab: 0x2b, Escape: 0x29 };
 
 const JPEG_START = Buffer.from([0xff, 0xd8]);
@@ -301,7 +304,7 @@ export function openScreenStream(
         case "text": {
           const text = msg.text;
           if (typeof text !== "string" || text === "" || text.length > 1000) return;
-          // A controlling viewer cannot queue more than a few typed chunks at once.
+          // A viewer cannot queue more than a few typed chunks at once.
           if (queuedText >= 20) return;
           queuedText++;
           typing = typing
