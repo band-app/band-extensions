@@ -1,7 +1,7 @@
 {
   "id": "vectorcraft",
   "name": "VectorCraft",
-  "version": "0.21.0-1",
+  "version": "0.21.1",
   "extensionApi": 1,
   "contributes": {
     "fileEditors": [

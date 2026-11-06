@@ -15,11 +15,13 @@ permissions:
 jobs:
   # Lists the extensions to build. A change under extensions/<name>/ selects that extension. A change
   # to the shared code (crates/, the workspace files, the scripts, the toolchain, this workflow)
-  # selects all of them. A change to anything else, such as the README, selects none.
+  # selects all of them. A change to anything else, such as the README, selects none. An extension
+  # with a package.json (simulator) is built by the node job, the others by the Rust job.
   changes:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.list.outputs.matrix }}
+      node_matrix: ${{ steps.list.outputs.node_matrix }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -41,9 +43,16 @@ jobs:
           else
             picked="$(for e in $all; do echo "$changed" | grep -q "^extensions/$e/" && echo "$e"; done || true)"
           fi
-          matrix="$(echo "$picked" | grep . | jq -R . | jq -sc 'map({ext: .})' || true)"
-          echo "matrix={\"include\":${matrix:-[]}}" >> "$GITHUB_OUTPUT"
+          rust="$(for e in $picked; do [ -f "extensions/$e/package.json" ] || echo "$e"; done)"
+          node="$(for e in $picked; do [ -f "extensions/$e/package.json" ] && echo "$e"; done || true)"
+          matrix="$(echo "$rust" | grep . | jq -R . | jq -sc 'map({ext: .})' || true)"
+          node_matrix="$(echo "$node" | grep . | jq -R . | jq -sc 'map({ext: .})' || true)"
+          {
+            echo "matrix={\"include\":${matrix:-[]}}"
+            echo "node_matrix={\"include\":${node_matrix:-[]}}"
+          } >> "$GITHUB_OUTPUT"
           echo "matrix: ${matrix:-[]}"
+          echo "node matrix: ${node_matrix:-[]}"
 
   build:
     needs: changes
@@ -60,13 +69,17 @@ jobs:
         id: ws
         run: |
           if grep -q '^\[workspace\]' "extensions/${{ matrix.ext }}/Cargo.toml" 2>/dev/null; then
-            echo "dir=extensions/${{ matrix.ext }}" >> "$GITHUB_OUTPUT"
-            echo "pkgs=--workspace" >> "$GITHUB_OUTPUT"
-            echo "fmt=--all" >> "$GITHUB_OUTPUT"
+            {
+              echo "dir=extensions/${{ matrix.ext }}"
+              echo "pkgs=--workspace"
+              echo "fmt=--all"
+            } >> "$GITHUB_OUTPUT"
           else
-            echo "dir=." >> "$GITHUB_OUTPUT"
-            echo "pkgs=-p band-editor -p ${{ matrix.ext }}-band" >> "$GITHUB_OUTPUT"
-            echo "fmt=-p band-editor -p ${{ matrix.ext }}-band" >> "$GITHUB_OUTPUT"
+            {
+              echo "dir=."
+              echo "pkgs=-p band-editor -p ${{ matrix.ext }}-band"
+              echo "fmt=-p band-editor -p ${{ matrix.ext }}-band"
+            } >> "$GITHUB_OUTPUT"
           fi
       - uses: ./.github/actions/setup
         with:
@@ -99,12 +112,59 @@ jobs:
             dist/*.tar.gz.sha256
           if-no-files-found: error
 
+  # Extensions that are Node programs, not Rust web builds: type check, unit tests, package.
+  build-node:
+    needs: changes
+    if: fromJSON(needs.changes.outputs.node_matrix).include[0] != null
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.changes.outputs.node_matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install
+        working-directory: extensions/${{ matrix.ext }}
+        run: npm ci --ignore-scripts
+      - name: Type check
+        working-directory: extensions/${{ matrix.ext }}
+        run: npm run typecheck
+      - name: Test
+        working-directory: extensions/${{ matrix.ext }}
+        run: npm test
+      - name: Package
+        run: scripts/package.sh ${{ matrix.ext }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.ext }}
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+          if-no-files-found: error
+
+  # The catalog generator, its schema copy and the checks on every extension's manifest.
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm test
+
   # One check to require in branch protection. It passes when every build passed or none was needed.
   ci:
-    needs: [changes, build]
+    needs: [changes, build, build-node, scripts]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - run: |
-          echo "changes: ${{ needs.changes.result }}, build: ${{ needs.build.result }}"
-          [ "${{ needs.changes.result }}" = success ] && { [ "${{ needs.build.result }}" = success ] || [ "${{ needs.build.result }}" = skipped ]; }
+          echo "changes: ${{ needs.changes.result }}, build: ${{ needs.build.result }}, build-node: ${{ needs.build-node.result }}, scripts: ${{ needs.scripts.result }}"
+          [ "${{ needs.changes.result }}" = success ] || exit 1
+          [ "${{ needs.scripts.result }}" = success ] || exit 1
+          for r in "${{ needs.build.result }}" "${{ needs.build-node.result }}"; do
+            [ "$r" = success ] || [ "$r" = skipped ] || exit 1
+          done

@@ -1,0 +1,12 @@
+{
+  "name": "band-extensions-tools",
+  "private": true,
+  "type": "module",
+  "description": "Repository scripts: the catalog generator and its tests.",
+  "scripts": {
+    "test": "node --test scripts/*.test.mjs"
+  },
+  "devDependencies": {
+    "zod": "^3.25.67"
+  }
+}

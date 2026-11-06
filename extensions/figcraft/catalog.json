@@ -1,0 +1,4 @@
+{
+  "description": "Open and edit design files (.figcraft, .fig) in a tab. Agents edit the open design through FigCraft's tools.",
+  "minBand": "0.61.0"
+}

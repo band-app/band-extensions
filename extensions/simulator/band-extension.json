@@ -1,0 +1,116 @@
+{
+  "id": "simulator",
+  "name": "iOS Simulator",
+  "version": "0.1.0",
+  "extensionApi": 1,
+  "contributes": {
+    "workerServices": [
+      {
+        "id": "main",
+        "entry": "service.mjs",
+        "requires": ["os=darwin", "xcrun"],
+        "capability": "simulator"
+      }
+    ],
+    "panels": [
+      {
+        "id": "screen",
+        "label": "Simulator",
+        "icon": "smartphone",
+        "entry": "panel.html",
+        "capability": "simulator"
+      }
+    ],
+    "tools": [
+      {
+        "name": "status",
+        "description": "Show this worktree's iOS simulator: its device id, whether it is booted, and its screen size in points. Each worktree has its own device on its worker (a Mac). The device boots on the first screenshot, tap or other action.",
+        "service": "main",
+        "method": "status"
+      },
+      {
+        "name": "screenshot",
+        "description": "Take a screenshot of this worktree's iOS simulator, booting it first when it is off. Answers with the path of a PNG on the worker's disk, its pixel size and the scale; open the file to see the screen. Coordinates for simulator_tap are in points: pixels divided by scale.",
+        "service": "main",
+        "method": "screenshot"
+      },
+      {
+        "name": "describe",
+        "description": "Read the iOS simulator screen's accessibility tree: each element's type, label, value and id, its frame and the point to tap it at. Cheaper and more exact than reading a screenshot. Coordinates are in points.",
+        "service": "main",
+        "method": "describe"
+      },
+      {
+        "name": "tap",
+        "description": "Tap the iOS simulator screen. Coordinates are in points, not screenshot pixels: divide pixels by the scale that simulator_screenshot reports (3 on current iPhones).",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "x": { "type": "number", "description": "Horizontal position in points" },
+            "y": { "type": "number", "description": "Vertical position in points" }
+          },
+          "required": ["x", "y"]
+        },
+        "service": "main",
+        "method": "tap"
+      },
+      {
+        "name": "type",
+        "description": "Type text into the focused field of the iOS simulator.",
+        "inputSchema": {
+          "type": "object",
+          "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 10000 } },
+          "required": ["text"]
+        },
+        "service": "main",
+        "method": "type"
+      },
+      {
+        "name": "button",
+        "description": "Press a hardware button on the iOS simulator.",
+        "inputSchema": {
+          "type": "object",
+          "properties": { "button": { "type": "string", "enum": ["HOME", "LOCK", "SIDE_BUTTON", "SIRI"] } },
+          "required": ["button"]
+        },
+        "service": "main",
+        "method": "button"
+      },
+      {
+        "name": "open_url",
+        "description": "Open a URL in the iOS simulator. A web URL opens Safari, a custom scheme opens the app that registered it.",
+        "inputSchema": {
+          "type": "object",
+          "properties": { "url": { "type": "string", "minLength": 1 } },
+          "required": ["url"]
+        },
+        "service": "main",
+        "method": "openUrl"
+      },
+      {
+        "name": "install",
+        "description": "Install an .app folder from this worktree (a simulator build) on the iOS simulator.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": { "type": "string", "minLength": 1, "description": "Absolute path of the .app inside this worktree" }
+          },
+          "required": ["path"]
+        },
+        "service": "main",
+        "method": "install"
+      },
+      {
+        "name": "launch",
+        "description": "Launch an installed app on the iOS simulator by bundle id.",
+        "inputSchema": {
+          "type": "object",
+          "properties": { "bundleId": { "type": "string", "minLength": 1 } },
+          "required": ["bundleId"]
+        },
+        "service": "main",
+        "method": "launch"
+      }
+    ]
+  }
+}
