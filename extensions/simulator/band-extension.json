@@ -18,7 +18,8 @@
         "label": "Simulator",
         "icon": "smartphone",
         "entry": "panel.html",
-        "capability": "simulator"
+        "capability": "simulator",
+        "defaultControl": true
       }
     ],
     "tools": [
@@ -30,7 +31,7 @@
       },
       {
         "name": "screenshot",
-        "description": "Take a screenshot of this worktree's iOS simulator, booting it first when it is off. Answers with the path of a PNG on the worker's disk, its pixel size and the scale; open the file to see the screen. Coordinates for simulator_tap are in points: pixels divided by scale.",
+        "description": "Take a screenshot of this worktree's iOS simulator, booting it first when it is off. Answers with the image and a line with its pixel size and the scale. Coordinates for simulator_tap are in points: pixels divided by scale.",
         "service": "main",
         "method": "screenshot"
       },

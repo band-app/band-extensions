@@ -1,5 +1,5 @@
 // Integration test for the simulator extension (S2, S3, S5). A real Band hub and real `band-worker`
-// processes from a Band checkout (BAND_SRC, v0.61.0), the packaged tarball installed through the
+// processes from a Band checkout of the simulator-as-extension branch (BAND_SRC), the packaged tarball installed through the
 // hub's install route, and a real Xcode on this Mac. integration/run.sh copies this file into
 // BAND_SRC/apps/hub/tests/ and runs it with that checkout's vitest.
 //
@@ -52,6 +52,20 @@ const CAN_RUN = hasSimctl && TARBALL !== "" && existsSync(TARBALL);
 /** The prefix of every device this run creates. A person's devices never start with it. */
 const PREFIX = `Band simext ${randomBytes(4).toString("hex")}`;
 const SEP = "–";
+
+/** Whether Simulator.app was open and visible before this run, so the window check can stand aside. */
+const simulatorAppWasVisible = (() => {
+  if (process.platform !== "darwin") return false;
+  try {
+    return execFileSync(
+      "osascript",
+      ["-e", 'tell application "System Events" to get visible of (processes whose name is "Simulator")'],
+      { encoding: "utf8", timeout: 20_000 },
+    ).includes("true");
+  } catch {
+    return false;
+  }
+})();
 
 const scratch: string[] = [];
 const tmp = (prefix: string) => {
@@ -267,7 +281,19 @@ const textOf = (r: ToolReply | undefined) =>
     unknown
   >;
 const failed = (r: ToolReply | undefined) => r?.rpc.result?.isError === true;
-const fileHash = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex");
+/** The image block of a tool reply and the text block that goes with it. */
+const imageOf = (r: ToolReply | undefined) => {
+  const content = r?.rpc.result?.content ?? [];
+  const image = content.find((c) => c.type === "image");
+  const text = content.find((c) => c.type === "text")?.text ?? "";
+  const bytes = Buffer.from(image?.data ?? "", "base64");
+  return {
+    mimeType: image?.mimeType,
+    bytes,
+    text,
+    hash: createHash("sha256").update(bytes).digest("hex"),
+  };
+};
 
 function cleanupDevices() {
   for (const d of listDevices()) {
@@ -458,13 +484,16 @@ describe.skipIf(!CAN_RUN)("simulator extension", () => {
     ]);
     for (const name of ["shot1", "shot2", "shot3"]) {
       expect(failed(r[name]), JSON.stringify(r[name]?.rpc)).toBe(false);
-      const shot = textOf(r[name]) as { path: string; width: number; height: number; scale: number };
-      expect(existsSync(shot.path)).toBe(true);
-      expect(readFileSync(shot.path).subarray(1, 4).toString()).toBe("PNG");
-      expect(shot.width).toBeGreaterThan(300);
-      expect(shot.scale).toBeGreaterThanOrEqual(2);
+      // An image block, not a file path, plus a text block with the pixel size and the scale.
+      const shot = imageOf(r[name]);
+      expect(shot.mimeType).toBe("image/png");
+      expect(shot.bytes.subarray(1, 4).toString()).toBe("PNG");
+      const size = /Screenshot (\d+)x(\d+) pixels, scale ([\d.]+)/.exec(shot.text);
+      expect(size, shot.text).not.toBeNull();
+      expect(Number(size?.[1])).toBeGreaterThan(300);
+      expect(Number(size?.[3])).toBeGreaterThanOrEqual(2);
     }
-    const hash = (n: string) => fileHash((textOf(r[n]) as { path: string }).path);
+    const hash = (n: string) => imageOf(r[n]).hash;
     expect(hash("shot1")).not.toBe(hash("shot2"));
     expect(hash("shot3")).not.toBe(hash("shot2"));
     expect(failed(r.launch), JSON.stringify(r.launch?.rpc)).toBe(false);
@@ -489,7 +518,7 @@ describe.skipIf(!CAN_RUN)("simulator extension", () => {
       call("type", "simulator_type", { text: "band" }),
       call("outside", "simulator_tap", { x: 99999, y: 99999 }),
     ]);
-    expect(fileHash((textOf(tapped.shot4) as { path: string }).path)).not.toBe(home);
+    expect(imageOf(tapped.shot4).hash).not.toBe(home);
     expect(failed(tapped.tap)).toBe(false);
     expect(failed(tapped.type)).toBe(false);
     expect(failed(tapped.outside)).toBe(true);
@@ -580,6 +609,75 @@ describe.skipIf(!CAN_RUN)("simulator extension", () => {
     expect(info.name).toBe(`${PREFIX} ${SEP} ${b}`);
     screen.ws.close();
   }, 200_000);
+
+  /** Pixel width of a JPEG, from its start-of-frame marker. */
+  const jpegWidth = (jpeg: Buffer): number => {
+    for (let i = 2; i + 9 < jpeg.length; ) {
+      if (jpeg[i] !== 0xff) {
+        i++;
+        continue;
+      }
+      const marker = jpeg[i + 1] as number;
+      if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+        return jpeg.readUInt16BE(i + 7);
+      }
+      i += 2 + jpeg.readUInt16BE(i + 2);
+    }
+    return 0;
+  };
+
+  it("S5: the loopback listener streams full-size frames (profile direct), the hub half-size ones (profile hub)", async () => {
+    const hubScreen = await openScreen(b);
+    await waitFor(async () => (hubScreen.frames.length > 2 ? true : undefined), {
+      label: "hub frames",
+      timeoutMs: 120_000,
+    });
+    const hubWidth = jpegWidth(hubScreen.frames[0] as Buffer);
+    hubScreen.ws.close();
+
+    const access = await m<{ port: number; token: string } | null>("worktree.directAccess", {
+      worktreeId: b,
+      hostId: mac.hostId,
+    });
+    if (!access) throw new Error("no direct access for the worktree");
+    const direct = new WebSocket(
+      `ws://127.0.0.1:${access.port}/plugins/simulator/stream?worktreeId=${encodeURIComponent(b)}&name=screen`,
+      ["band", `band-token.${access.token}`],
+      { headers: { origin: "app://h-0123456789ab" } },
+    );
+    const frames: Buffer[] = [];
+    direct.on("message", (data: Buffer, isBinary: boolean) => {
+      if (isBinary) frames.push(data);
+    });
+    await waitFor(async () => (frames.length > 2 ? true : undefined), {
+      label: "direct frames",
+      timeoutMs: 120_000,
+    });
+    const directWidth = jpegWidth(frames[0] as Buffer);
+    direct.close();
+    expect(hubWidth).toBeGreaterThan(100);
+    // The hub profile halves each side; allow rounding.
+    expect(directWidth).toBeGreaterThanOrEqual(hubWidth * 2 - 2);
+  }, 300_000);
+
+  it("S5: Simulator.app has no window in front after the simulator started", () => {
+    // Only meaningful when Simulator.app was not already open and visible before the run.
+    if (simulatorAppWasVisible) return;
+    let visible = "";
+    try {
+      visible = execFileSync(
+        "osascript",
+        ["-e", 'tell application "System Events" to get visible of (processes whose name is "Simulator")'],
+        { encoding: "utf8", timeout: 20_000 },
+      ).trim();
+    } catch (err) {
+      console.warn(`window check skipped (osascript failed): ${err instanceof Error ? err.message : err}`);
+      return;
+    }
+    console.log(`Simulator.app visible: ${JSON.stringify(visible) || "(not running)"}`);
+    // "" means the process is not running, "false" means it runs hidden. Both are fine.
+    expect(visible).not.toContain("true");
+  });
 
   it("S5: when the lease runs out the service shuts its devices down, and the next call after renewal works", async () => {
     proxy = await startCuttableProxy(server.url);

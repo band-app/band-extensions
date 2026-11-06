@@ -1,10 +1,10 @@
-import { mkdir, readdir, readFile, realpath, rm, stat } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { DeviceSet, maxBooted } from "./devices.ts";
 import { getStateDir, setStateDir } from "./config.ts";
 import { defineWorkerService } from "./sdk/index.mjs";
 import { ServeSimHelpers } from "./servesim.ts";
-import { openScreenStream, type ScreenStream, serveSimButton } from "./stream.ts";
+import { jpegSize, openScreenStream, type ScreenStream, serveSimButton } from "./stream.ts";
 import { run } from "./tools.ts";
 
 function obj(params: unknown): Record<string, unknown> {
@@ -28,22 +28,8 @@ function pngSize(png: Buffer): { width: number; height: number } {
   return { width: png.readUInt32BE(16), height: png.readUInt32BE(20) };
 }
 
-/** Screenshots kept per service. Older ones are deleted when a new one is taken. */
-const KEEP_SCREENSHOTS = 10;
-
-async function pruneScreenshots(dir: string): Promise<void> {
-  const names = await readdir(dir).catch(() => [] as string[]);
-  const files = await Promise.all(
-    names
-      .filter((n) => n.endsWith(".png"))
-      .map(async (n) => ({
-        n,
-        t: await stat(join(dir, n)).then((s) => s.mtimeMs, () => 0),
-      })),
-  );
-  files.sort((a, b) => b.t - a.t);
-  for (const old of files.slice(KEEP_SCREENSHOTS)) await rm(join(dir, old.n), { force: true });
-}
+/** An image block in a tool result may hold at most 5 MB decoded; stay under it with room to spare. */
+const MAX_IMAGE_BYTES = 4_500_000;
 
 /**
  * The simulator as a worker service. Every worktree gets one device named "Band – <worktree id>"
@@ -78,25 +64,42 @@ defineWorkerService({
     },
 
     /**
-     * A tool result is JSON text, so the PNG goes to a file the agent can open. A base64 string of
-     * a full-size screenshot would cost hundreds of thousands of tokens.
+     * Answers with an image block, which Band passes to the agent as an image, and a short text
+     * block with the size and scale. The PNG is read once and deleted. A PNG over the image limit
+     * is taken again as a JPEG.
      */
     async screenshot(_params, { worktreeKey }) {
       const device = await devices.exclusive(() => devices.ensureBooted(worktreeKey));
       const dir = join(getStateDir(), "screenshots");
       await mkdir(dir, { recursive: true });
-      const file = join(dir, `shot-${device.udid}-${Date.now()}.png`);
-      await run("xcrun", ["simctl", "io", device.udid, "screenshot", "--type=png", file]);
-      const png = await readFile(file);
+      const base = join(dir, `shot-${device.udid}-${Date.now()}`);
+      const take = async (type: "png" | "jpeg") => {
+        const file = `${base}.${type === "png" ? "png" : "jpg"}`;
+        try {
+          await run("xcrun", ["simctl", "io", device.udid, "screenshot", `--type=${type}`, file]);
+          return await readFile(file);
+        } finally {
+          await rm(file, { force: true });
+        }
+      };
+      let image = await take("png");
+      let mimeType: "image/png" | "image/jpeg" = "image/png";
+      let size: { width: number; height: number } | null = pngSize(image);
+      if (image.length > MAX_IMAGE_BYTES) {
+        image = await take("jpeg");
+        mimeType = "image/jpeg";
+        size = jpegSize(image) ?? size;
+      }
       const screen = await helpers.screen(device.udid);
-      const { width, height } = pngSize(png);
-      await pruneScreenshots(dir);
+      const scale = screen && size ? Math.round((size.width / screen.width) * 100) / 100 : null;
       return {
-        path: file,
-        width,
-        height,
-        scale: screen ? Math.round((width / screen.width) * 100) / 100 : null,
-        note: "Open the PNG at path to see the screen. Coordinates for simulator_tap are in points: pixels divided by scale.",
+        content: [
+          {
+            type: "text",
+            text: `Screenshot ${size?.width ?? "?"}x${size?.height ?? "?"} pixels, scale ${scale ?? "unknown"}. Coordinates for simulator_tap are in points: pixels divided by scale.`,
+          },
+          { type: "image", data: image.toString("base64"), mimeType },
+        ],
       };
     },
 
@@ -181,8 +184,9 @@ defineWorkerService({
             helper,
             helpers,
             { ...screen, udid: device.udid, name: device.name },
-            // Every frame crosses the link and the hub, so the half-size 15 fps profile always applies.
-            { ...obj(params), profile: "hub" },
+            // Band sets `profile`: "direct" for the desktop app on this machine (full size and
+            // rate), "hub" when the hub carries the frames (half size, 15 fps at most).
+            obj(params),
           );
           for await (const message of live.output) {
             if (closed) break;
