@@ -133,12 +133,16 @@ jobs:
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
+          # The job has no checkout, so gh cannot read the repository from git.
+          GH_REPO: ${{ github.repository }}
           EXT: ${{ matrix.ext }}
           VERSION: ${{ matrix.version }}
           REF: ${{ needs.plan.outputs.ref }}
         run: |
           tag="$EXT-v$VERSION"
-          if gh release view "$tag" >/dev/null 2>&1; then echo "$tag exists"; exit 0; fi
+          if gh release view "$tag" --json tagName >/dev/null 2>err.txt; then echo "$tag exists"; exit 0; fi
+          # Only "release not found" means create it; any other error stops the job.
+          grep -qi "release not found" err.txt || { cat err.txt >&2; exit 1; }
           gh release create "$tag" --target "$REF" \
             --title "$EXT $VERSION" \
             --notes "Unpack into <BAND_HOME>/extensions/ and run \`band extensions reload\`. Check the download with the .sha256 file." \
