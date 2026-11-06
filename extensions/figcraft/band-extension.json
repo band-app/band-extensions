@@ -1,7 +1,7 @@
 {
   "id": "figcraft",
   "name": "FigCraft",
-  "version": "0.15.0-1",
+  "version": "0.15.1",
   "extensionApi": 1,
   "contributes": {
     "fileEditors": [

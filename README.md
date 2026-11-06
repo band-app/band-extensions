@@ -1,6 +1,6 @@
-# craft-extensions
+# band-extensions
 
-[Band](https://github.com/amirilovic/band) editor extensions for the ArtCraft apps. Each extension is a web build of one app that Band frames in a sandboxed iframe, so a person edits a file in a Band tab and an agent edits the same open document through the app's MCP tools.
+Official extensions for [Band](https://github.com/band-app/band). Five are editors for the ArtCraft apps: each is a web build of one app that Band frames in a sandboxed iframe, so a person edits a file in a Band tab and an agent edits the same open document through the app's MCP tools. One, the simulator, is a worker service with a panel and agent tools.
 
 | Extension | Opens | App |
 |---|---|---|
@@ -9,15 +9,22 @@
 | [deckcraft](extensions/deckcraft/README.md) | `*.pptx` | [DeckCraft](https://github.com/storytold/deckcraft) |
 | [figcraft](extensions/figcraft/README.md) | `*.figcraft`, `*.fig` | [FigCraft](https://github.com/storytold/figcraft) |
 | [vectorcraft](extensions/vectorcraft/README.md) | `*.svg`, `*.svgz`, `*.vectorcraft` | [VectorCraft](https://github.com/storytold/vectorcraft) |
+| [simulator](extensions/simulator/README.md) | a Simulator panel and nine `simulator_*` agent tools | iOS Simulator on a Mac worker, through [serve-sim](https://github.com/EvanBacon/serve-sim) |
 
-## Install a release on a hub
+## Install from Band
+
+Band lists these extensions under Settings > Extensions. The hub reads one file, `https://github.com/band-app/band-extensions/releases/download/catalog/index.json`, an asset of the release tagged `catalog`. An admin clicks Install, or Update to vX when a newer version is listed. `band extensions install --official <id>` does the same from the CLI. The Catalog workflow regenerates the file after every release, from the newest release of each extension, and `scripts/catalog.mjs` writes it.
+
+Versions are plain `MAJOR.MINOR.PATCH`, because Band's catalog skips any other form. The wrapper versions that earlier releases used (`0.7.0-1`) are gone: gridcraft is `0.7.1`, wordcraft and deckcraft and figcraft are `0.15.1`, vectorcraft is `0.21.1`. The upstream app version is in each extension's README.
+
+## Install a release on a hub by hand
 
 A release asset is a tarball with one top-level folder named after the extension. It holds the built web files, so the hub machine needs no Rust.
 
 ```sh
-VERSION=0.7.0-1
-curl -fsSL -O "https://github.com/band-app/craft-extensions/releases/download/gridcraft-v$VERSION/gridcraft-$VERSION.tar.gz"
-curl -fsSL -O "https://github.com/band-app/craft-extensions/releases/download/gridcraft-v$VERSION/gridcraft-$VERSION.tar.gz.sha256"
+VERSION=0.7.1
+curl -fsSL -O "https://github.com/band-app/band-extensions/releases/download/gridcraft-v$VERSION/gridcraft-$VERSION.tar.gz"
+curl -fsSL -O "https://github.com/band-app/band-extensions/releases/download/gridcraft-v$VERSION/gridcraft-$VERSION.tar.gz.sha256"
 shasum -a 256 -c "gridcraft-$VERSION.tar.gz.sha256"
 mkdir -p ~/.band/extensions
 tar -xz -C ~/.band/extensions -f "gridcraft-$VERSION.tar.gz"
@@ -50,7 +57,9 @@ extensions/<name>/      band-extension.json, NOTICE, README.md, verify.mjs, and 
 scripts/package.sh      build, tools.json, compressed copies, tarball and checksum
 scripts/install.sh      package and unpack into a Band home
 scripts/check-tag.sh    checks a release tag against the manifest version
-.github/workflows/      ci.yml (pull requests and main) and release.yml (tags)
+scripts/catalog*.mjs    the catalog generator, Band's catalog schema (a copy) and their tests (npm test)
+extensions/<name>/catalog.json  the description and minBand the catalog lists
+.github/workflows/      ci.yml (pull requests and main), release.yml (tags) and catalog.yml (index.json)
 ```
 
 ## Compact layout and selection

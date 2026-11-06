@@ -1,8 +1,9 @@
 name: Release
 
-# A tag <ext>-v<version> (for example gridcraft-v0.7.0-1) builds the extension and publishes a
-# GitHub release with the tarball and its .sha256. Run by hand with an extension name, it builds the
-# same files as a dry run: an artifact, no release.
+# A tag <ext>-v<version> (for example gridcraft-v0.7.1) builds the extension and publishes a
+# GitHub release with the tarball and its .sha256, then regenerates the catalog (catalog.yml), the
+# index.json that Band's Settings > Extensions reads. Run by hand with an extension name, it builds
+# the same files and the catalog as a dry run: artifacts, no release and no upload.
 on:
   push:
     tags: ["*-v*"]
@@ -40,14 +41,23 @@ jobs:
       - name: Find the Cargo workspace
         id: ws
         run: |
-          if grep -q '^\[workspace\]' "extensions/${{ steps.pick.outputs.ext }}/Cargo.toml" 2>/dev/null; then
+          if [ -f "extensions/${{ steps.pick.outputs.ext }}/package.json" ]; then
+            echo "dir=none" >> "$GITHUB_OUTPUT"
+          elif grep -q '^\[workspace\]' "extensions/${{ steps.pick.outputs.ext }}/Cargo.toml" 2>/dev/null; then
             echo "dir=extensions/${{ steps.pick.outputs.ext }}" >> "$GITHUB_OUTPUT"
           else
             echo "dir=." >> "$GITHUB_OUTPUT"
           fi
+      # An extension with a package.json (simulator) is a Node program: scripts/package.sh runs
+      # npm ci and its build. It needs Node, not Rust or trunk.
       - uses: ./.github/actions/setup
+        if: steps.ws.outputs.dir != 'none'
         with:
           workspace: ${{ steps.ws.outputs.dir }}
+      - uses: actions/setup-node@v4
+        if: steps.ws.outputs.dir == 'none'
+        with:
+          node-version: 22
       - name: Package
         run: scripts/package.sh ${{ steps.pick.outputs.ext }}
       - uses: actions/upload-artifact@v4
@@ -68,3 +78,13 @@ jobs:
             --title "$EXT $VERSION" \
             --notes "Unpack into <BAND_HOME>/extensions/ and run \`band extensions reload\`. Check the download with the .sha256 file." \
             "dist/$EXT-$VERSION.tar.gz" "dist/$EXT-$VERSION.tar.gz.sha256"
+
+  # Regenerates index.json from all releases, including the one just created, and uploads it to
+  # the `catalog` release. A dry run builds the file and keeps it as an artifact.
+  catalog:
+    needs: release
+    uses: ./.github/workflows/catalog.yml
+    with:
+      publish: ${{ github.event_name == 'push' }}
+    permissions:
+      contents: write

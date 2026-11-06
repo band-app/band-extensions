@@ -1,7 +1,7 @@
 {
   "id": "gridcraft",
   "name": "GridCraft",
-  "version": "0.7.0-1",
+  "version": "0.7.1",
   "extensionApi": 1,
   "contributes": {
     "fileEditors": [

@@ -1,0 +1,17 @@
+iOS Simulator for Band
+Copyright (c) 2026 Band and the band-extensions contributors.
+Licensed under the MIT License or the Apache License, Version 2.0, at your option
+(LICENSE-MIT, LICENSE-APACHE).
+
+Third-party material
+
+This extension is a port of the simulator plugin bundled with Band (band-app/band, plugins/simulator,
+MIT License, Copyright (c) 2026 Band) and ships a copy of its extension worker SDK
+(packages/extension-worker-sdk, MIT License, Copyright (c) 2026 Band) as src/sdk/.
+
+It ships these npm packages unmodified, in node_modules/:
+
+- serve-sim 0.1.47, Apache License 2.0, Copyright Evan Bacon. https://github.com/EvanBacon/serve-sim
+  Its dist/ holds the screen capture and input helpers (a native Node module and helper binaries)
+  that this extension runs. They use Apple's private SimulatorKit and CoreSimulator APIs.
+- ws 8, MIT License, Copyright (c) Einar Otto Stangvik and contributors. https://github.com/websockets/ws

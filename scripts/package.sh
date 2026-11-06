@@ -4,8 +4,11 @@
 # Reads extensions/<ext>/band-extension.json and writes
 #   dist/<ext>-<version>.tar.gz         one top-level folder, <ext>/
 #   dist/<ext>-<version>.tar.gz.sha256  `sha256sum` format, checked from inside dist/
-# The folder holds band-extension.json, tools.json, the web build (each .wasm and .js with a .gz
-# copy, also inside folders such as snippets/, and a .br copy when `brotli` is installed), LICENSE-MIT, LICENSE-APACHE and NOTICE.
+# The folder holds band-extension.json, catalog.json (the description and minBand the catalog
+# generator reads), tools.json, the web build (each .wasm and .js with a .gz copy, also inside
+# folders such as snippets/, and a .br copy when `brotli` is installed), LICENSE-MIT, LICENSE-APACHE and NOTICE.
+# An extension with a package.json instead of a Cargo workspace (simulator) builds with
+# `npm ci && node build.mjs` and has no tools.json, because its manifest declares the tools.
 # SKIP_BUILD=1 reuses extensions/<ext>/dist/web instead of building it.
 set -euo pipefail
 
@@ -21,28 +24,41 @@ version="$(node -p "JSON.parse(require('fs').readFileSync('$src/band-extension.j
 id="$(node -p "JSON.parse(require('fs').readFileSync('$src/band-extension.json','utf8')).id")"
 [ "$id" = "$ext" ] || { echo "band-extension.json id is '$id', expected '$ext'" >&2; exit 1; }
 
+node_ext=0
+[ -f "$src/package.json" ] && node_ext=1
 if [ "${SKIP_BUILD:-}" != "1" ]; then
-  (cd "$src/app" && trunk build --release)
+  if [ "$node_ext" = 1 ]; then
+    (cd "$src" && npm ci --ignore-scripts && node build.mjs)
+  else
+    (cd "$src/app" && trunk build --release)
+  fi
 fi
 build="$src/dist/web"
-[ -f "$build/index.html" ] || { echo "no $build/index.html: build first" >&2; exit 1; }
+if [ "$node_ext" = 1 ]; then
+  [ -f "$build/service.mjs" ] || { echo "no $build/service.mjs: build first" >&2; exit 1; }
+else
+  [ -f "$build/index.html" ] || { echo "no $build/index.html: build first" >&2; exit 1; }
+fi
+[ -f "$src/catalog.json" ] || { echo "no extensions/$ext/catalog.json (description and minBand)" >&2; exit 1; }
 
 # tools.json comes from the extension's own MCP server; the crate is named <ext>-band. An extension
 # with its own [workspace] in extensions/<ext>/Cargo.toml builds from that folder.
-cargo_dir="$root"
-if grep -q '^\[workspace\]' "$src/Cargo.toml" 2>/dev/null; then cargo_dir="$src"; fi
-(cd "$cargo_dir" && cargo run --quiet --release -p "$ext-band" --bin tools-json) > "$build/tools.json"
+if [ "$node_ext" = 0 ]; then
+  cargo_dir="$root"
+  if grep -q '^\[workspace\]' "$src/Cargo.toml" 2>/dev/null; then cargo_dir="$src"; fi
+  (cd "$cargo_dir" && cargo run --quiet --release -p "$ext-band" --bin tools-json) > "$build/tools.json"
+fi
 
 stage="$root/dist/stage"
 rm -rf "$stage"
 mkdir -p "$stage/$ext"
 cp -R "$build"/* "$stage/$ext/"
-cp "$src/band-extension.json" "$src/NOTICE" "$root/LICENSE-MIT" "$root/LICENSE-APACHE" "$stage/$ext/"
+cp "$src/band-extension.json" "$src/catalog.json" "$src/NOTICE" "$root/LICENSE-MIT" "$root/LICENSE-APACHE" "$stage/$ext/"
 
 while IFS= read -r f; do
   gzip -9 -k -f "$f"
   if command -v brotli >/dev/null; then brotli -q 11 -f -k "$f"; fi
-done < <(find "$stage/$ext" -type f \( -name '*.wasm' -o -name '*.js' \))
+done < <(find "$stage/$ext" -type f \( -name '*.wasm' -o -name '*.js' \) -not -path '*/node_modules/*')
 
 name="$ext-$version.tar.gz"
 rm -f "$root/dist/$name" "$root/dist/$name.sha256"

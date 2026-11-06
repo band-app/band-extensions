@@ -1,0 +1,4 @@
+{
+  "description": "An iOS simulator for each worktree on a Mac worker. Agents drive it with tools and a person watches and controls it in a Simulator tab.",
+  "minBand": "0.61.0"
+}

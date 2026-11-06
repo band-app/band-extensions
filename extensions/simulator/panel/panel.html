@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>iOS Simulator</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #ffffff;
+        --fg: #1a1a1a;
+        --muted: #6b6b6b;
+        --border: #d4d4d4;
+        --accent: #e8e8e8;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root { --bg: #111111; --fg: #f0f0f0; --muted: #9a9a9a; --border: #333333; --accent: #262626; }
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        display: flex;
+        flex-direction: column;
+        background: var(--bg);
+        color: var(--fg);
+        font: 12px/1.4 system-ui, -apple-system, sans-serif;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 32px;
+        padding: 0 8px;
+        border-bottom: 1px solid var(--border);
+        flex: none;
+      }
+      #device { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      #status { color: var(--muted); white-space: nowrap; }
+      #spacer { flex: 1; }
+      button {
+        height: 24px;
+        padding: 0 8px;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background: transparent;
+        color: var(--fg);
+        font: inherit;
+        cursor: pointer;
+      }
+      button:hover:not(:disabled) { background: var(--accent); }
+      button:disabled { opacity: 0.4; cursor: default; }
+      button[hidden] { display: none; }
+      main {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 8px;
+      }
+      canvas {
+        max-width: 100%;
+        max-height: 100%;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        touch-action: none;
+        outline: none;
+        cursor: default;
+      }
+      body[data-controlling="true"] canvas { cursor: pointer; }
+      #error { color: #c0392b; max-width: 40ch; }
+    </style>
+  </head>
+  <body data-phase="connecting" data-controlling="false" data-layout="regular">
+    <header>
+      <span id="device" data-testid="sim-panel__device">iOS Simulator</span>
+      <span id="status" data-testid="sim-panel__status">connecting</span>
+      <span id="error" data-testid="sim-panel__error" hidden></span>
+      <span id="spacer"></span>
+      <button id="home" type="button" data-testid="sim-panel__home" disabled>Home</button>
+      <button id="reconnect" type="button" data-testid="sim-panel__reconnect" hidden>Reconnect</button>
+    </header>
+    <main>
+      <canvas id="screen" tabindex="0" width="1" height="1" data-testid="sim-panel__canvas" aria-label="iOS Simulator screen"></canvas>
+    </main>
+    <script src="panel.js"></script>
+  </body>
+</html>
