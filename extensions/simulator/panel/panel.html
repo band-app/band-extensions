@@ -29,7 +29,7 @@
         display: flex;
         align-items: center;
         gap: 8px;
-        height: 32px;
+        height: 40px;
         padding: 0 8px;
         border-bottom: 1px solid var(--border);
         flex: none;
@@ -37,6 +37,20 @@
       #device { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       #status { color: var(--muted); white-space: nowrap; }
       #spacer { flex: 1; }
+      svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+      #phone { color: var(--muted); }
+      .icon { width: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+      #picker-wrap { position: relative; min-width: 0; }
+      #picker { display: flex; align-items: center; gap: 8px; width: 220px; max-width: 100%; height: 28px; }
+      #picker-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+      #picker-version { color: var(--muted); white-space: nowrap; }
+      #menu { position: absolute; right: 0; top: 32px; z-index: 10; min-width: 260px; max-height: 60vh; overflow: auto; margin: 0; padding: 4px; list-style: none; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3); }
+      #menu[hidden] { display: none; }
+      #menu li { display: flex; gap: 8px; align-items: center; padding: 4px 8px; border-radius: 4px; cursor: pointer; white-space: nowrap; }
+      #menu li:hover, #menu li[aria-selected="true"] { background: var(--accent); }
+      #menu .name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+      #menu .meta { color: var(--muted); }
+      #menu .empty { color: var(--muted); cursor: default; }
       button {
         height: 24px;
         padding: 0 8px;
@@ -67,17 +81,34 @@
         outline: none;
         cursor: default;
       }
-      body[data-controlling="true"] canvas { cursor: pointer; }
+      body[data-phase="live"] canvas { cursor: pointer; }
       #error { color: #c0392b; max-width: 40ch; }
     </style>
   </head>
-  <body data-phase="connecting" data-controlling="false" data-layout="regular">
+  <body data-phase="connecting" data-layout="regular">
     <header>
+      <svg id="phone" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></svg>
       <span id="device" data-testid="sim-panel__device">iOS Simulator</span>
-      <span id="status" data-testid="sim-panel__status">connecting</span>
+      <span id="status" data-testid="sim-panel__status">Connecting</span>
       <span id="error" data-testid="sim-panel__error" hidden></span>
       <span id="spacer"></span>
-      <button id="home" type="button" data-testid="sim-panel__home" disabled>Home</button>
+      <div id="picker-wrap">
+        <button id="picker" type="button" data-testid="sim-panel__picker" aria-label="Choose device" aria-haspopup="listbox" aria-expanded="false" title="Choose device">
+          <span id="picker-name" data-testid="sim-panel__picker-name">iOS Simulator</span>
+          <span id="picker-version" data-testid="sim-panel__picker-version"></span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <ul id="menu" role="listbox" aria-label="Devices" data-testid="sim-panel__menu" hidden></ul>
+      </div>
+      <button id="rotate" class="icon" type="button" data-testid="sim-panel__rotate" aria-label="Rotate" title="Rotate" disabled>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+      </button>
+      <button id="home" class="icon" type="button" data-testid="sim-panel__home" aria-label="Home" title="Home" disabled>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg>
+      </button>
+      <button id="power" class="icon" type="button" data-testid="sim-panel__power" aria-label="Turn off" title="Turn off" disabled>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></svg>
+      </button>
       <button id="reconnect" type="button" data-testid="sim-panel__reconnect" hidden>Reconnect</button>
     </header>
     <main>

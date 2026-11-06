@@ -18,8 +18,7 @@
         "label": "Simulator",
         "icon": "smartphone",
         "entry": "panel.html",
-        "capability": "simulator",
-        "defaultControl": true
+        "capability": "simulator"
       }
     ],
     "tools": [

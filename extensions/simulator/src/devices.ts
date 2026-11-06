@@ -1,10 +1,19 @@
-import { config } from "./config.ts";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { config, getStateDir } from "./config.ts";
 import { run } from "./tools.ts";
 
 export interface Device {
   udid: string;
   name: string;
   state: string;
+}
+
+/** A device the picker offers: Band's own or the person's. `runtime` is the iOS version, such as "26.5". */
+export interface PickerDevice extends Device {
+  runtime: string;
+  /** Whether Band created it (its name starts with the prefix). */
+  owned: boolean;
 }
 
 interface SimctlDevices {
@@ -65,6 +74,8 @@ function compareVersions(a: string, b: string): number {
  * deleted.
  */
 export class DeviceSet {
+  /** The device each worktree chose in the panel's picker, by worktree key. Loaded from the state dir on first use. */
+  private selection: Map<string, string> | null = null;
   private chain: Promise<unknown> = Promise.resolve();
   private readonly lastUsed = new Map<string, number>();
   /** Called after a device shuts down, so its serve-sim helper goes too. */
@@ -89,6 +100,84 @@ export class DeviceSet {
       .flat()
       .filter((d) => d.isAvailable !== false && d.name.startsWith(owned))
       .map(({ udid, name, state }) => ({ udid, name, state }));
+  }
+
+  /**
+   * Every available iOS device on the machine with its iOS version, Band's and the person's,
+   * except the base device Band clones from. Sorted by name.
+   */
+  async listAll(): Promise<PickerDevice[]> {
+    const { stdout } = await this.simctl(["list", "devices", "-j"]);
+    const parsed = JSON.parse(stdout) as SimctlDevices;
+    const owned = `${namePrefix()} \u2013 `;
+    const out: PickerDevice[] = [];
+    for (const [runtimeId, list] of Object.entries(parsed.devices)) {
+      const m = /SimRuntime\.iOS-(\d+(?:-\d+)*)$/.exec(runtimeId);
+      if (!m) continue;
+      const runtime = (m[1] as string).replace(/-/g, ".");
+      for (const d of list) {
+        if (d.isAvailable === false || d.name === baseName()) continue;
+        out.push({ udid: d.udid, name: d.name, state: d.state, runtime, owned: d.name.startsWith(owned) });
+      }
+    }
+    return out.sort((a, b) => a.name.localeCompare(b.name) || a.udid.localeCompare(b.udid));
+  }
+
+  private async loadSelection(): Promise<Map<string, string>> {
+    if (this.selection) return this.selection;
+    const map = new Map<string, string>();
+    try {
+      const parsed = JSON.parse(await readFile(join(getStateDir(), "selection.json"), "utf8")) as unknown;
+      if (typeof parsed === "object" && parsed !== null) {
+        for (const [k, v] of Object.entries(parsed)) if (typeof v === "string") map.set(k, v);
+      }
+    } catch {
+      // No file yet, or no state dir (tests): nothing is selected.
+    }
+    this.selection = map;
+    return map;
+  }
+
+  private async saveSelection(): Promise<void> {
+    try {
+      const dir = getStateDir();
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, "selection.json"), JSON.stringify(Object.fromEntries(this.selection ?? [])));
+    } catch {
+      // The choice then lasts until the service restarts.
+    }
+  }
+
+  /** Makes `udid` the device of the worktree, or goes back to the worktree's own device when `udid` is null. */
+  async select(worktreeKey: string, udid: string | null): Promise<Device> {
+    const map = await this.loadSelection();
+    if (udid === null) {
+      map.delete(worktreeKey);
+      await this.saveSelection();
+      return this.ensureDevice(worktreeKey);
+    }
+    const found = (await this.listAll()).find((d) => d.udid === udid);
+    if (!found) throw new Error(`No available iOS simulator has the id ${udid}`);
+    if (found.name === deviceName(worktreeKey)) map.delete(worktreeKey);
+    else map.set(worktreeKey, udid);
+    await this.saveSelection();
+    return found;
+  }
+
+  /**
+   * The device the worktree acts on: the one picked in the panel while it still exists, otherwise
+   * the worktree's own device (cloned on first use).
+   */
+  async current(worktreeKey: string): Promise<Device> {
+    const map = await this.loadSelection();
+    const udid = map.get(worktreeKey);
+    if (udid) {
+      const found = (await this.listAll()).find((d) => d.udid === udid);
+      if (found) return found;
+      map.delete(worktreeKey);
+      await this.saveSelection();
+    }
+    return this.ensureDevice(worktreeKey);
   }
 
   /** The newest available iOS runtime and the newest iPhone Pro it supports, unless the env names them. */
@@ -138,7 +227,14 @@ export class DeviceSet {
    * there is room under the cap.
    */
   async ensureBooted(worktreeKey: string): Promise<Device> {
-    const device = await this.ensureDevice(worktreeKey);
+    return this.bootDevice(await this.current(worktreeKey));
+  }
+
+  /**
+   * Boots a device. Only Band's own devices are shut down to make room; a device of the person's
+   * counts for nothing and is never evicted.
+   */
+  async bootDevice(device: Device): Promise<Device> {
     this.lastUsed.set(device.udid, Date.now());
     if (device.state === "Booted") return device;
     const booted = (await this.list()).filter(
@@ -173,8 +269,15 @@ export class DeviceSet {
     if (device && device.state !== "Shutdown") await this.shutdown(device.udid);
   }
 
+  /** Forgets the worktree's picked device. */
+  async forgetSelection(worktreeKey: string): Promise<void> {
+    const map = await this.loadSelection();
+    if (map.delete(worktreeKey)) await this.saveSelection();
+  }
+
   /** Shuts down and deletes the worktree's device. */
   async deleteWorktree(worktreeKey: string): Promise<void> {
+    await this.forgetSelection(worktreeKey);
     const name = deviceName(worktreeKey);
     const device = (await this.list()).find((d) => d.name === name);
     if (!device) return;

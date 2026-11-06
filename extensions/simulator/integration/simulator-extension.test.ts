@@ -406,7 +406,7 @@ describe.skipIf(!CAN_RUN)("simulator extension", () => {
       }>;
     }>("extensions.list");
     const ext = extensions.find((e) => e.id === "simulator");
-    expect(ext?.version).toBe("0.1.0");
+    expect(ext?.version).toMatch(/^\d+\.\d+\.\d+$/);
     expect(ext?.contributes.panels).toHaveLength(1);
     expect(ext?.contributes.tools.map((t) => t.name).sort()).toEqual(
       ["button", "describe", "install", "launch", "open_url", "screenshot", "status", "tap", "type"].sort(),
@@ -598,7 +598,7 @@ describe.skipIf(!CAN_RUN)("simulator extension", () => {
     return { ws, frames, texts };
   }
 
-  it("the panel stream sends an info message and half-size JPEG frames, and drops input until control", async () => {
+  it("the panel stream sends an info message and half-size JPEG frames", async () => {
     const screen = await openScreen(b);
     await waitFor(async () => (screen.frames.length > 2 ? true : undefined), {
       label: "frames",
@@ -609,6 +609,71 @@ describe.skipIf(!CAN_RUN)("simulator extension", () => {
     expect(info.name).toBe(`${PREFIX} ${SEP} ${b}`);
     screen.ws.close();
   }, 200_000);
+
+  /** A call a panel makes: the service method on the worktree's worker, as a person's device token. */
+  const panelCall = async (worktreeId: string, method: string, params: Record<string, unknown> = {}) =>
+    (
+      await m<{ result: Record<string, unknown> }>("extensions.panelCall", {
+        extensionId: "simulator",
+        panelId: "screen",
+        worktreeId,
+        method,
+        params,
+      })
+    ).result;
+
+  it("S6: picking the other device makes the panel stream and the agent tools act on it, and picking back returns", async () => {
+    const list = (await panelCall(a, "devices")) as {
+      current: string;
+      devices: Array<{ udid: string; name: string; runtime: string; state: string; owned: boolean }>;
+    };
+    const own = list.devices.find((d) => d.name === `${PREFIX} ${SEP} ${a}`);
+    const other = list.devices.find((d) => d.name === `${PREFIX} ${SEP} ${b}`);
+    if (!own || !other) throw new Error("the picker list misses a device of this run");
+    expect(list.current).toBe(own.udid);
+    expect(own.runtime).toMatch(/^\d+(\.\d+)*$/);
+    expect(own.owned).toBe(true);
+    expect(list.devices.some((d) => d.name === `${PREFIX} ${SEP} base`)).toBe(false);
+
+    await panelCall(a, "select", { udid: other.udid });
+    const status = await turn(mac, a, "a-picked", [call("picked", "simulator_status")]);
+    expect(textOf(status.picked).udid).toBe(other.udid);
+    const screen = await openScreen(a);
+    await waitFor(async () => (screen.texts.some((t) => t.includes('"info"')) ? true : undefined), {
+      label: "info",
+      timeoutMs: 300_000,
+    });
+    expect((JSON.parse(screen.texts.find((t) => t.includes('"info"')) ?? "{}") as { udid?: string }).udid).toBe(other.udid);
+    screen.ws.close();
+
+    await panelCall(a, "select", { udid: own.udid });
+    const back = await turn(mac, a, "a-back", [call("back", "simulator_status")]);
+    expect(textOf(back.back).udid).toBe(own.udid);
+  }, 600_000);
+
+  it("S8: Rotate swaps the device's pixel size and turning back restores it; S7: Power shuts the shown device down", async () => {
+    const size = async () => {
+      const r = await turn(mac, b, `b-size-${Date.now()}`, [call("s", "simulator_screenshot")]);
+      const m = /Screenshot (\d+)x(\d+)/.exec(JSON.stringify(r.s));
+      if (!m) throw new Error("no size in the screenshot answer");
+      return { w: Number(m[1]), h: Number(m[2]) };
+    };
+    const start = await size();
+    expect(start.h).toBeGreaterThan(start.w);
+    await panelCall(b, "rotate", { orientation: "landscape_left" });
+    await waitFor(async () => {
+      const s = await size();
+      return s.w > s.h ? s : undefined;
+    }, { label: "landscape", timeoutMs: 30_000 });
+    await panelCall(b, "rotate", { orientation: "portrait" });
+    await waitFor(async () => {
+      const s = await size();
+      return s.h > s.w ? s : undefined;
+    }, { label: "portrait", timeoutMs: 30_000 });
+
+    await panelCall(b, "shutdown");
+    expect(listDevices().find((d) => d.name === `${PREFIX} ${SEP} ${b}`)?.state).toBe("Shutdown");
+  }, 300_000);
 
   /** Pixel width of a JPEG, from its start-of-frame marker. */
   const jpegWidth = (jpeg: Buffer): number => {

@@ -2,9 +2,10 @@
 // message with a MessagePort. Everything else goes over that port (docs/extensions.md, Panels).
 //
 // The page opens the extension's "screen" stream. The worker service sends one text message
-// {"type":"booting"} and {"type":"info"} and then one JPEG per frame. Input goes back as JSON through "stream.send", and
-// Band's hub drops it until the person presses Take control in Band's toolbar above this frame.
-// This page ignores input as well until it gets control {enabled: true}.
+// {"type":"booting"} and {"type":"info"} and then one JPEG per frame. Input goes back as JSON
+// through "stream.send". Input is always on: Band has no Take control step for panels, so this page
+// ignores the "control" message. The toolbar calls the service (devices, select, shutdown, rotate)
+// with "call".
 (() => {
   "use strict";
 
@@ -21,7 +22,6 @@
 
   let port = null;
   let visible = true;
-  let controlling = false;
   let pressed = false;
   let opened = false;
   let retries = 0;
@@ -30,35 +30,77 @@
   let drawing = false;
   let nextStream = 0;
   let streamId = STREAM_ID;
+  /** The device the stream shows: {udid, name}. */
+  let current = null;
+  let deviceList = [];
+  /** True from the Power press that shuts the device down until it is turned on again. */
+  let off = false;
+  let nextCall = 0;
+  const calls = new Map();
+
+  const STATUS = { connecting: "Connecting", booting: "Booting", live: "Connected", closed: "Disconnected", off: "Off" };
 
   function setPhase(phase, text) {
     document.body.dataset.phase = phase;
-    $("status").textContent = text ?? phase;
+    $("status").textContent = text ?? STATUS[phase] ?? phase;
+    const live = phase === "live";
+    $("home").disabled = !live;
+    $("rotate").disabled = !live;
+    $("power").disabled = !(live || phase === "off");
+    const turnOn = phase === "off";
+    $("power").setAttribute("aria-label", turnOn ? "Turn on" : "Turn off");
+    $("power").title = turnOn ? "Turn on" : "Turn off";
+    if (!live) pressed = false;
   }
 
-  function refreshStatus() {
-    if (document.body.dataset.phase === "live") {
-      $("status").textContent = controlling ? "Controlling" : "View only";
+  function call(method, params) {
+    return new Promise((resolve, reject) => {
+      if (!port) return reject(new Error("not connected"));
+      const id = `call-${nextCall++}`;
+      calls.set(id, { resolve, reject });
+      port.postMessage({ type: "call", id, method, params: params ?? {} });
+    });
+  }
+
+  function showError(text) {
+    $("error").textContent = text;
+    $("error").hidden = !text;
+  }
+
+  function deviceInfo(udid) {
+    return deviceList.find((d) => d.udid === udid);
+  }
+
+  function renderDevice() {
+    const name = current?.name ?? "iOS Simulator";
+    $("device").textContent = name;
+    $("picker-name").textContent = name;
+    const info = current ? deviceInfo(current.udid) : undefined;
+    $("picker-version").textContent = info ? `iOS ${info.runtime}` : "";
+  }
+
+  async function refreshDevices() {
+    try {
+      const res = await call("devices");
+      deviceList = res.devices ?? [];
+      if (!current || current.udid !== res.current) {
+        const d = deviceInfo(res.current);
+        if (d) current = { udid: d.udid, name: d.name };
+      }
+      renderDevice();
+    } catch {
+      // The picker keeps its last list.
     }
   }
 
-  function setControlling(on) {
-    controlling = on;
-    if (!on) pressed = false;
-    document.body.dataset.controlling = on ? "true" : "false";
-    $("home").disabled = !on;
-    refreshStatus();
-    if (on) canvas.focus();
-  }
-
   function send(message) {
-    if (port && opened) port.postMessage({ type: "stream.send", id: streamId, message: JSON.stringify(message) });
+    if (port && opened && !off) port.postMessage({ type: "stream.send", id: streamId, message: JSON.stringify(message) });
   }
 
   function openStream() {
     clearTimeout(reconnectTimer);
     $("reconnect").hidden = true;
-    $("error").hidden = true;
+    showError("");
     setPhase("connecting");
     opened = false;
     // A new id per attempt, so a late message of the old stream is not taken for this one.
@@ -80,10 +122,7 @@
         }
         ctx.drawImage(bitmap, 0, 0);
         bitmap.close();
-        if (document.body.dataset.phase !== "live") {
-          setPhase("live");
-          refreshStatus();
-        }
+        if (document.body.dataset.phase !== "live" && !off) setPhase("live");
       }
     } catch {
       // A frame that does not decode is skipped.
@@ -95,12 +134,10 @@
   function onClosed(code, reason) {
     opened = false;
     pending = null;
-    setControlling(false);
+    // A stream the page closed itself (Power off, a new pick) is not a drop.
+    if (off) return;
     setPhase("closed");
-    if (reason) {
-      $("error").textContent = reason;
-      $("error").hidden = false;
-    }
+    if (reason) showError(reason);
     const delay = RECONNECT_DELAYS_MS[retries];
     if (!FINAL_CLOSE_CODES.has(code) && delay !== undefined) {
       retries += 1;
@@ -108,6 +145,13 @@
     } else {
       $("reconnect").hidden = false;
     }
+  }
+
+  function closeStream() {
+    clearTimeout(reconnectTimer);
+    if (port) port.postMessage({ type: "stream.close", id: streamId });
+    opened = false;
+    pending = null;
   }
 
   function onMessage(m) {
@@ -127,8 +171,12 @@
         if (m.id !== streamId) break;
         try {
           const info = JSON.parse(m.text);
-          if (info.type === "booting") setPhase("connecting", "booting device");
-          if (info.type === "info" && typeof info.name === "string") $("device").textContent = info.name;
+          if (info.type === "booting") setPhase("booting");
+          if (info.type === "info" && typeof info.name === "string") {
+            current = { udid: info.udid, name: info.name };
+            renderDevice();
+            void refreshDevices();
+          }
         } catch {
           // Not JSON: ignored.
         }
@@ -142,8 +190,20 @@
         if (m.id !== streamId) break;
         onClosed(m.code, m.reason);
         break;
+      case "call.result": {
+        const c = calls.get(m.id);
+        calls.delete(m.id);
+        c?.resolve(m.result);
+        break;
+      }
+      case "call.error": {
+        const c = calls.get(m.id);
+        calls.delete(m.id);
+        c?.reject(new Error(m.message));
+        break;
+      }
       case "control":
-        setControlling(m.enabled === true);
+        // Input is always on; Band's message is only for pages written for the old protocol.
         break;
       case "visible":
         visible = m.visible !== false;
@@ -173,23 +233,23 @@
   }
 
   canvas.addEventListener("pointerdown", (e) => {
-    if (!controlling) return;
+    if (!opened) return;
     canvas.setPointerCapture(e.pointerId);
     pressed = true;
     touch("begin", e);
   });
   canvas.addEventListener("pointermove", (e) => {
-    if (controlling && pressed) touch("move", e);
+    if (pressed) touch("move", e);
   });
   const release = (e) => {
-    if (!controlling || !pressed) return;
+    if (!pressed) return;
     pressed = false;
     touch("end", e);
   };
   canvas.addEventListener("pointerup", release);
   canvas.addEventListener("pointercancel", release);
   canvas.addEventListener("keydown", (e) => {
-    if (!controlling || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (!opened || e.metaKey || e.ctrlKey || e.altKey) return;
     if (NAMED_KEYS.has(e.key)) {
       e.preventDefault();
       send({ type: "key", key: e.key });
@@ -198,9 +258,109 @@
       send({ type: "text", text: e.key });
     }
   });
-  $("home").addEventListener("click", () => {
-    if (controlling) send({ type: "button", name: "HOME" });
+  $("home").addEventListener("click", () => send({ type: "button", name: "HOME" }));
+
+  $("rotate").addEventListener("click", async () => {
+    // The frame is wider than tall in landscape.
+    const orientation = canvas.width > canvas.height ? "portrait" : "landscape_left";
+    $("rotate").disabled = true;
+    try {
+      await call("rotate", { orientation });
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      if (document.body.dataset.phase === "live") $("rotate").disabled = false;
+    }
   });
+
+  $("power").addEventListener("click", async () => {
+    $("power").disabled = true;
+    if (off) {
+      off = false;
+      retries = 0;
+      openStream();
+      return;
+    }
+    off = true;
+    closeStream();
+    setPhase("off");
+    $("power").disabled = true;
+    try {
+      await call("shutdown");
+    } catch (err) {
+      showError(err.message);
+    }
+    $("power").disabled = false;
+  });
+
+  const menu = $("menu");
+  const picker = $("picker");
+
+  function closeMenu() {
+    menu.hidden = true;
+    picker.setAttribute("aria-expanded", "false");
+  }
+
+  function renderMenu() {
+    menu.textContent = "";
+    if (deviceList.length === 0) {
+      const li = document.createElement("li");
+      li.className = "empty";
+      li.textContent = "No devices";
+      menu.append(li);
+      return;
+    }
+    for (const d of deviceList) {
+      const li = document.createElement("li");
+      li.setAttribute("role", "option");
+      li.dataset.udid = d.udid;
+      li.setAttribute("aria-selected", String(d.udid === current?.udid));
+      for (const [cls, text] of [["name", d.name], ["meta", `iOS ${d.runtime}`], ["meta", d.state === "Booted" ? "On" : "Off"]]) {
+        const span = document.createElement("span");
+        span.className = cls;
+        span.textContent = text;
+        li.append(span);
+      }
+      li.addEventListener("click", () => {
+        closeMenu();
+        void choose(d);
+      });
+      menu.append(li);
+    }
+  }
+
+  async function choose(d) {
+    if (d.udid === current?.udid) return;
+    showError("");
+    clearTimeout(reconnectTimer);
+    try {
+      await call("select", { udid: d.udid });
+    } catch (err) {
+      showError(err.message);
+      return;
+    }
+    closeStream();
+    off = false;
+    retries = 0;
+    current = { udid: d.udid, name: d.name };
+    renderDevice();
+    openStream();
+  }
+
+  picker.addEventListener("click", async () => {
+    if (!menu.hidden) return closeMenu();
+    await refreshDevices();
+    renderMenu();
+    menu.hidden = false;
+    picker.setAttribute("aria-expanded", "true");
+  });
+  document.addEventListener("click", (e) => {
+    if (!menu.hidden && !$("picker-wrap").contains(e.target)) closeMenu();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeMenu();
+  });
+
   $("reconnect").addEventListener("click", () => {
     retries = 0;
     openStream();

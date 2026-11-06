@@ -45,7 +45,7 @@ Band adds a `profile` to the params of every stream it opens. With `"direct"` (t
 
 ## The panel
 
-`panel.html` runs in Band's sandboxed iframe and draws the JPEG frames of the `screen` stream on a canvas. The panel sets `defaultControl`, so Band takes control for the person as soon as the stream connects and input works at once. Release in Band's toolbar returns it to view-only until the stream reconnects. Until control is on, the hub drops everything the panel sends, and the panel ignores input too. Pointer positions are fractions of the screen, so scaling does not move a tap.
+`panel.html` runs in Band's sandboxed iframe and draws the JPEG frames of the `screen` stream on a canvas. Input is always on: Band has no Take control step for panels (Band 0.63.0 and later, the `minBand` of this extension), so the panel sends touches, keys and Home from the moment the stream opens. The toolbar shows the device name and status, a picker of every available iOS simulator with its iOS version, and icon-only Rotate, Home and Power buttons. Picking a device calls the service's `select`, which remembers it per worktree: the stream and every agent tool then act on it. Power shuts the shown device down, and while it is off the same button boots it again. Rotate calls `serve-sim rotate`. Pointer positions are fractions of the screen, so scaling does not move a tap.
 
 ## Build and test
 
