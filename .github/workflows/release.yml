@@ -1,70 +1,156 @@
 name: Release
 
-# A tag <ext>-v<version> (for example gridcraft-v0.7.0-1) builds the extension and publishes a
-# GitHub release with the tarball and its .sha256. Run by hand with an extension name, it builds the
-# same files as a dry run: an artifact, no release.
+# Every push to main releases the extensions whose code changed. scripts/next-versions.mjs picks
+# the version: a minor bump when a commit since the extension's last release is a `feat`, a patch
+# otherwise. A version set by hand in band-extension.json above the last release (a major bump, or a
+# first release) is released as written. The `plan` job commits the new versions to main as
+# `chore(release): ...` (a push with GITHUB_TOKEN starts no workflow, so this cannot loop), `build`
+# packages each extension at that commit, and `publish` creates the release <ext>-v<version>.
+#
+# Run by hand (Actions > Release > Run workflow) it is a dry run: it prints the plan and builds the
+# tarballs as artifacts, and pushes nothing and releases nothing.
 on:
   push:
-    tags: ["*-v*"]
+    branches: [main]
   workflow_dispatch:
-    inputs:
-      extension:
-        description: Extension to build (a folder under extensions/)
-        required: true
-        default: gridcraft
+
+# Two merges close together release one after the other, so the second sees the first's tags.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 permissions:
   contents: write
 
 jobs:
-  release:
+  plan:
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      ref: ${{ steps.commit.outputs.ref }}
     steps:
       - uses: actions/checkout@v4
-      - name: Pick the extension
-        id: pick
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Plan the releases
+        id: plan
         env:
-          EVENT: ${{ github.event_name }}
-          TAG: ${{ github.ref_name }}
-          INPUT: ${{ inputs.extension }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "$EVENT" = push ]; then
-            read -r ext version < <(scripts/check-tag.sh "$TAG")
+          git fetch --tags --force
+          node scripts/next-versions.mjs plan --write | tee plan.json
+          echo "matrix=$(jq -c '{include: [.releases[] | {ext, version}]}' plan.json)" >> "$GITHUB_OUTPUT"
+          echo "message=$(jq -r .message plan.json)" >> "$GITHUB_OUTPUT"
+      - name: Commit the versions to main
+        id: commit
+        env:
+          MESSAGE: ${{ steps.plan.outputs.message }}
+          DRY: ${{ github.event_name != 'push' }}
+        run: |
+          echo "ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          [ -n "$MESSAGE" ] || { echo "nothing to release"; exit 0; }
+          git status --short
+          if [ "$DRY" = true ]; then echo "dry run: not committing"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add extensions/*/band-extension.json
+          if git diff --cached --quiet; then
+            echo "manifests already hold the planned versions"
           else
-            ext="$INPUT"
-            [ -f "extensions/$ext/band-extension.json" ] || { echo "no extensions/$ext/band-extension.json" >&2; exit 1; }
-            version="$(jq -r .version "extensions/$ext/band-extension.json")"
+            git commit -m "$MESSAGE"
+            for attempt in 1 2 3 4 5; do
+              git push origin HEAD:main && break
+              [ "$attempt" = 5 ] && { echo "main kept moving" >&2; exit 1; }
+              git pull --rebase origin main
+              sleep $((attempt * 3))
+            done
           fi
-          echo "ext=$ext" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plan
+          path: plan.json
+
+  build:
+    needs: plan
+    if: fromJSON(needs.plan.outputs.matrix).include[0] != null
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+      # A dry run builds the planned version without having committed it.
+      - uses: actions/download-artifact@v4
+        with:
+          name: plan
+      - run: node scripts/next-versions.mjs apply plan.json
       - name: Find the Cargo workspace
         id: ws
         run: |
-          if grep -q '^\[workspace\]' "extensions/${{ steps.pick.outputs.ext }}/Cargo.toml" 2>/dev/null; then
-            echo "dir=extensions/${{ steps.pick.outputs.ext }}" >> "$GITHUB_OUTPUT"
+          if [ -f "extensions/${{ matrix.ext }}/package.json" ]; then
+            echo "dir=none" >> "$GITHUB_OUTPUT"
+          elif grep -q '^\[workspace\]' "extensions/${{ matrix.ext }}/Cargo.toml" 2>/dev/null; then
+            echo "dir=extensions/${{ matrix.ext }}" >> "$GITHUB_OUTPUT"
           else
             echo "dir=." >> "$GITHUB_OUTPUT"
           fi
+      # An extension with a package.json (simulator) is a Node program: scripts/package.sh runs
+      # npm ci and its build. It needs Node, not Rust or trunk.
       - uses: ./.github/actions/setup
+        if: steps.ws.outputs.dir != 'none'
         with:
           workspace: ${{ steps.ws.outputs.dir }}
+      - uses: actions/setup-node@v4
+        if: steps.ws.outputs.dir == 'none'
+        with:
+          node-version: 22
       - name: Package
-        run: scripts/package.sh ${{ steps.pick.outputs.ext }}
+        run: scripts/package.sh ${{ matrix.ext }}
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.pick.outputs.ext }}-${{ steps.pick.outputs.version }}
+          name: ${{ matrix.ext }}-${{ matrix.version }}
           path: |
             dist/*.tar.gz
             dist/*.tar.gz.sha256
           if-no-files-found: error
+
+  publish:
+    needs: [plan, build]
+    if: github.event_name == 'push' && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.ext }}-${{ matrix.version }}
       - name: Create the release
-        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
-          EXT: ${{ steps.pick.outputs.ext }}
-          VERSION: ${{ steps.pick.outputs.version }}
+          EXT: ${{ matrix.ext }}
+          VERSION: ${{ matrix.version }}
+          REF: ${{ needs.plan.outputs.ref }}
         run: |
-          gh release create "$GITHUB_REF_NAME" --verify-tag \
+          tag="$EXT-v$VERSION"
+          if gh release view "$tag" >/dev/null 2>&1; then echo "$tag exists"; exit 0; fi
+          gh release create "$tag" --target "$REF" \
             --title "$EXT $VERSION" \
             --notes "Unpack into <BAND_HOME>/extensions/ and run \`band extensions reload\`. Check the download with the .sha256 file." \
-            "dist/$EXT-$VERSION.tar.gz" "dist/$EXT-$VERSION.tar.gz.sha256"
+            "$EXT-$VERSION.tar.gz" "$EXT-$VERSION.tar.gz.sha256"
+
+  # Regenerates index.json from all releases, including the ones just created, and uploads it to
+  # the `catalog` release. A dry run builds the file and keeps it as an artifact.
+  catalog:
+    needs: [plan, build, publish]
+    if: ${{ !cancelled() && needs.build.result != 'skipped' }}
+    uses: ./.github/workflows/catalog.yml
+    with:
+      publish: ${{ github.event_name == 'push' }}
+    permissions:
+      contents: write
