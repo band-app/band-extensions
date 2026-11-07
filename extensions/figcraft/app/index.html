@@ -22,6 +22,35 @@
     /* Shown once the page stopped on an internal error (web.rs: show_stopped). */
     #figcraft_stopped { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; box-sizing: border-box;
       padding: 16px; text-align: center; color: #1e1e1e; background: rgba(245, 245, 245, 0.92); font: 14px/1.5 system-ui, sans-serif; }
+
+    /* The compact preview (preview.rs drives it through window.figPreview). */
+    :root { --fp-bg: #f5f5f5; --fp-fg: #1e1e1e; --fp-muted: #6b6b6b; --fp-border: #d8d8d8; --fp-card: #ffffff; --fp-accent: #2f6fed; --fp-accent-fg: #ffffff; color-scheme: light dark; }
+    @media (prefers-color-scheme: dark) {
+      :root { --fp-bg: #2c2c2c; --fp-fg: #f0f0f0; --fp-muted: #b8b8b8; --fp-border: #444; --fp-card: #1e1e1e; }
+    }
+    #fp { position: absolute; inset: 0; z-index: 5; display: flex; flex-direction: column; background: var(--fp-bg); color: var(--fp-fg);
+      font: 14px/1.4 system-ui, sans-serif; }
+    #fp[hidden], #fp_back[hidden] { display: none; }
+    #fp_bar { flex: none; display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--fp-border); }
+    #fp_title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fp-muted); }
+    .fp_button { font: inherit; font-weight: 600; padding: 6px 14px; border: 0; border-radius: 8px; color: var(--fp-accent-fg); background: var(--fp-accent); }
+    #fp_nav { flex: none; display: flex; gap: 6px; padding: 8px 12px; overflow-x: auto; border-bottom: 1px solid var(--fp-border); scrollbar-width: none; }
+    #fp_nav:empty { display: none; }
+    #fp_nav button { flex: none; max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: inherit; padding: 4px 10px;
+      border: 1px solid var(--fp-border); border-radius: 999px; color: var(--fp-fg); background: transparent; }
+    #fp_nav button[aria-current] { border-color: var(--fp-accent); color: var(--fp-accent); }
+    #fp_scroll { flex: 1; min-height: 0; overflow: auto; touch-action: pan-x pan-y; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+    #fp_content { box-sizing: border-box; min-width: 100%; padding: 12px; }
+    #fp_content h2 { margin: 16px 0 8px; font-size: 13px; font-weight: 600; color: var(--fp-muted); text-transform: none; }
+    #fp_content h2:first-child { margin-top: 0; }
+    .fp_card { margin: 0 0 16px; }
+    .fp_card figcaption { margin: 0 0 4px; font-size: 12px; color: var(--fp-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .fp_frame { position: relative; width: 100%; background: var(--fp-card); border: 1px solid var(--fp-border); overflow: hidden; }
+    .fp_frame img { position: absolute; inset: 0; width: 100%; height: 100%; display: block; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+    .fp_card[data-state="failed"] .fp_frame::after { content: "Could not render this frame"; position: absolute; inset: 0; display: flex; align-items: center;
+      justify-content: center; color: var(--fp-muted); font-size: 12px; }
+    #fp_empty { padding: 24px 0; text-align: center; color: var(--fp-muted); }
+    #fp_back { position: absolute; z-index: 6; left: 50%; bottom: calc(12px + env(safe-area-inset-bottom)); transform: translateX(-50%); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3); }
     @media (prefers-color-scheme: dark) {
       html, body { background: #2c2c2c; }
       #figcraft_loading { color: #b8b8b8; }
@@ -31,6 +60,186 @@
 </head>
 <body>
   <canvas id="figcraft_canvas"></canvas>
+  <div id="fp" hidden>
+    <div id="fp_bar"><span id="fp_title">Preview</span><button id="fp_edit" class="fp_button" type="button">Edit</button></div>
+    <nav id="fp_nav" aria-label="Frames"></nav>
+    <div id="fp_scroll"><div id="fp_content"></div></div>
+  </div>
+  <button id="fp_back" class="fp_button" type="button" hidden>Preview</button>
   <div id="figcraft_loading">Loading FigCraft&hellip;</div>
+  <script>
+    // The compact preview's interface. preview.rs gives it the frames and the images the engine
+    // exports; this page does the scrolling, lazy loading, pinch zoom and buttons.
+    (() => {
+      const $ = (id) => document.getElementById(id);
+      const fp = $("fp"), scroller = $("fp_scroll"), content = $("fp_content"), nav = $("fp_nav"), back = $("fp_back"), canvas = $("figcraft_canvas");
+      const cards = new Map(); // key -> { key, el, frame, img, px, dirty, failed, near, url }
+      const queue = [];
+      let zoom = 1, settleTimer = 0, pinch = null, mode = "off", pending = false;
+      const wake = () => { if (typeof window.figPreviewWake === "function") window.figPreviewWake(); };
+      const send = (t) => { queue.push(t); wake(); };
+      const dpr = () => Math.min(window.devicePixelRatio || 1, 3);
+      const MAX_ZOOM = 8;
+
+      const io = new IntersectionObserver((entries) => {
+        for (const e of entries) { const c = cards.get(e.target.dataset.key); if (c) c.near = e.isIntersecting; }
+        wake();
+      }, { root: scroller, rootMargin: "100% 0px 100% 0px" });
+
+      // Pixels a card needs: its width on screen at the device's density, rounded up so a small zoom does not re-render.
+      const need = (c) => Math.min(4096, Math.ceil((c.frame.getBoundingClientRect().width * dpr()) / 256) * 256 || 256);
+      const wants = (c) => c.near && !c.failed && (c.dirty || c.px < need(c));
+
+      function setZoom(next, fx, fy) {
+        next = Math.max(1, Math.min(MAX_ZOOM, next));
+        if (next === zoom) return;
+        const r = scroller.getBoundingClientRect(), x = fx - r.left, y = fy - r.top;
+        const rx = (scroller.scrollLeft + x) / content.offsetWidth, ry = (scroller.scrollTop + y) / content.offsetHeight;
+        zoom = next;
+        content.style.width = scroller.clientWidth * zoom + "px";
+        scroller.scrollLeft = rx * content.offsetWidth - x;
+        scroller.scrollTop = ry * content.offsetHeight - y;
+        fp.dataset.zoom = zoom.toFixed(2);
+        clearTimeout(settleTimer);
+        settleTimer = setTimeout(wake, 150); // sharper images once the gesture settles
+      }
+      const spread = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+      scroller.addEventListener("touchstart", (e) => { if (e.touches.length === 2) pinch = { d: spread(e.touches), z: zoom }; }, { passive: true });
+      scroller.addEventListener("touchmove", (e) => {
+        if (!pinch || e.touches.length !== 2) return;
+        e.preventDefault();
+        const t = e.touches;
+        setZoom((pinch.z * spread(t)) / pinch.d, (t[0].clientX + t[1].clientX) / 2, (t[0].clientY + t[1].clientY) / 2);
+      }, { passive: false });
+      const endPinch = (e) => { if (e.touches.length < 2) pinch = null; };
+      scroller.addEventListener("touchend", endPinch, { passive: true });
+      scroller.addEventListener("touchcancel", endPinch, { passive: true });
+      // A trackpad pinch arrives as ctrl+wheel.
+      scroller.addEventListener("wheel", (e) => {
+        if (!e.ctrlKey) return;
+        e.preventDefault();
+        setZoom(zoom * Math.exp(-e.deltaY / 100), e.clientX, e.clientY);
+      }, { passive: false });
+      new ResizeObserver(() => { content.style.width = scroller.clientWidth * zoom + "px"; }).observe(scroller);
+
+      function markCurrent() {
+        let best = null;
+        const top = scroller.getBoundingClientRect().top + 8;
+        for (const c of cards.values()) { if (c.el.getBoundingClientRect().top <= top) best = c; }
+        for (const b of nav.children) { if (best && b.dataset.key === best.key) b.setAttribute("aria-current", "true"); else b.removeAttribute("aria-current"); }
+      }
+      scroller.addEventListener("scroll", () => { markCurrent(); wake(); }, { passive: true });
+
+      $("fp_edit").addEventListener("click", () => send("edit"));
+      back.addEventListener("click", () => send("back"));
+
+      window.figPreview = {
+        // Called by preview.rs. `listing` is { pages: [{ name, frames: [{ key, name, w, h }] }] }.
+        frames(listing) {
+          const data = JSON.parse(listing);
+          const seen = new Set();
+          const order = [];
+          nav.textContent = "";
+          const multi = data.pages.length > 1;
+          for (const page of data.pages) {
+            if (multi && page.frames.length) order.push(Object.assign(document.createElement("h2"), { textContent: page.name }));
+            for (const f of page.frames) {
+              seen.add(f.key);
+              let c = cards.get(f.key);
+              if (!c) {
+                const el = document.createElement("figure");
+                el.className = "fp_card";
+                el.dataset.key = f.key;
+                el.innerHTML = '<figcaption></figcaption><div class="fp_frame"><img alt="" draggable="false" decoding="async"></div>';
+                c = { key: f.key, el, frame: el.querySelector(".fp_frame"), img: el.querySelector("img"), px: 0, dirty: true, failed: false, near: false, url: "" };
+                cards.set(f.key, c);
+                io.observe(el);
+              }
+              c.dirty = true;
+              c.failed = false;
+              delete c.el.dataset.state;
+              c.el.querySelector("figcaption").textContent = f.name || "Untitled";
+              c.frame.style.aspectRatio = f.w + " / " + f.h;
+              order.push(c.el);
+              const b = document.createElement("button");
+              b.type = "button";
+              b.dataset.key = f.key;
+              b.textContent = f.name || "Untitled";
+              b.addEventListener("click", () => c.el.scrollIntoView({ block: "start", behavior: "smooth" }));
+              nav.append(b);
+            }
+          }
+          for (const [key, c] of cards) {
+            if (seen.has(key)) continue;
+            io.unobserve(c.el);
+            if (c.url) URL.revokeObjectURL(c.url);
+            cards.delete(key);
+          }
+          if (!order.length) order.push(Object.assign(document.createElement("div"), { id: "fp_empty", textContent: "Nothing to preview" }));
+          content.replaceChildren(...order);
+          $("fp_title").textContent = cards.size === 1 ? "1 frame" : cards.size + " frames";
+          fp.dataset.frames = String(cards.size);
+          markCurrent();
+          wake();
+        },
+        show(next) {
+          mode = next;
+          fp.hidden = next !== "preview";
+          back.hidden = next !== "edit";
+          // The canvas keeps its size while hidden, so the editor is ready the moment Edit is pressed.
+          canvas.style.visibility = next === "preview" ? "hidden" : "visible";
+          fp.dataset.mode = next;
+          document.documentElement.dataset.fpMode = next;
+          if (next === "preview") wake();
+        },
+        theme(themeMode, tokensJson) {
+          let tokens = {};
+          try { tokens = JSON.parse(tokensJson) || {}; } catch (_) { /* keep the defaults */ }
+          const root = document.documentElement.style;
+          const pick = (name, vars) => {
+            const v = [name, name.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase())].map((k) => tokens[k]).find((x) => typeof x === "string" && x);
+            for (const cssVar of vars) { if (v) root.setProperty(cssVar, v); else root.removeProperty(cssVar); }
+          };
+          pick("background", ["--fp-bg"]);
+          pick("foreground", ["--fp-fg"]);
+          pick("mutedForeground", ["--fp-muted"]);
+          pick("border", ["--fp-border"]);
+          pick("card", ["--fp-card"]);
+          pick("primary", ["--fp-accent"]);
+          pick("primaryForeground", ["--fp-accent-fg"]);
+          root.colorScheme = themeMode === "light" || themeMode === "dark" ? themeMode : "light dark";
+        },
+        drain() { return JSON.stringify(queue.splice(0)); },
+        // The visible card nearest the top that needs an image, as JSON, or "".
+        nextJob() {
+          let best = null, top = Infinity;
+          for (const c of cards.values()) {
+            if (!wants(c)) continue;
+            const t = Math.abs(c.el.getBoundingClientRect().top);
+            if (t < top) { best = c; top = t; }
+          }
+          if (!best) return "";
+          return JSON.stringify({ key: best.key, px: need(best) });
+        },
+        image(key, px, bytes) {
+          const c = cards.get(key);
+          if (!c) return;
+          const old = c.url;
+          c.url = URL.createObjectURL(new Blob([bytes], { type: "image/png" }));
+          c.img.onload = () => { c.el.dataset.state = "ready"; if (old) URL.revokeObjectURL(old); };
+          c.img.src = c.url;
+          c.px = px;
+          c.dirty = false;
+        },
+        fail(key) {
+          const c = cards.get(key);
+          if (!c) return;
+          c.failed = true;
+          c.dirty = false;
+          c.el.dataset.state = "failed";
+        },
+      };
+    })();
+  </script>
 </body>
 </html>

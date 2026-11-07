@@ -1,6 +1,6 @@
 // Copied from storytold/figcraft apps/figcraft-web/src/main.rs at rev 35684eaa028e (MIT OR Apache-2.0,
 // see LICENSE-MIT and LICENSE-APACHE at the repo root).
-// Changes: added `mod editor` and `mod mcp`, dropped `mod api`, `mod saved_files` and the tests of the
+// Changes: added `mod editor`, `mod mcp` and `mod preview`, dropped `mod api`, `mod saved_files` and the tests of the
 // copied modules, and trimmed the doc comment to what this build does.
 
 //! FigCraft in the browser, as a Band editor.
@@ -26,6 +26,8 @@ mod local_fonts;
 mod mcp;
 #[cfg(target_arch = "wasm32")]
 mod pasted;
+#[cfg(target_arch = "wasm32")]
+mod preview;
 #[cfg(target_arch = "wasm32")]
 mod query;
 #[cfg(target_arch = "wasm32")]
