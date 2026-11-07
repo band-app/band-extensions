@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -12,6 +12,8 @@ import { makeAndroidSdk, script } from "./fakes.mjs";
 const dir = mkdtempSync(join(tmpdir(), "sim-service-"));
 const PREFIX = `band-test-${Math.floor(Date.now() / 1000).toString(36)}-${process.pid}`;
 const droid = makeAndroidSdk(join(dir, "droid"), ["Pixel_8", "Pixel_6"]);
+// The Android stream turns PNGs into JPEGs with sips, which exists only on macOS (the only system the service runs on).
+const HAS_SIPS = existsSync("/usr/bin/sips");
 const WT = { worktreeKey: "wt-1", worktreePath: dir };
 
 let child;
@@ -126,7 +128,7 @@ describe("the service", () => {
     await assert.rejects(call("tap", { x: 1, y: 1, device: "no such device" }), /No device has the id or name/);
   });
 
-  it("without `device` a tool acts on the pane focused last, and `device` still wins", async () => {
+  it("without `device` a tool acts on the pane focused last, and `device` still wins", { skip: !HAS_SIPS }, async () => {
     await openStream(1, "android:avd:Pixel_8");
     await until(() => hasFrame(1), "the first pane's frame");
     assert.equal(texts(1).find((t) => t.type === "info").platform, "android");
@@ -150,7 +152,7 @@ describe("the service", () => {
     assert.equal((await call("list")).focused, "android:avd:Pixel_8");
   });
 
-  it("keyboard and touch from a pane reach only its own device", async () => {
+  it("keyboard and touch from a pane reach only its own device", { skip: !HAS_SIPS }, async () => {
     clearLog();
     sendToStream(2, { type: "key", key: "Enter" });
     sendToStream(1, { type: "button", name: "BACK" });
@@ -158,7 +160,7 @@ describe("the service", () => {
     assert.deepEqual(adbLog().sort(), ["emulator-5554 shell input keyevent 4", "emulator-5556 shell input keyevent 66"]);
   });
 
-  it("turning a device off tells its pane, and closing the focused pane moves the focus", async () => {
+  it("turning a device off tells its pane, and closing the focused pane moves the focus", { skip: !HAS_SIPS }, async () => {
     await call("shutdown", { device: "android:avd:Pixel_6" });
     await until(() => texts(2).some((t) => t.type === "off"), "the off message");
     await request("stream.close", { streamId: 2 });

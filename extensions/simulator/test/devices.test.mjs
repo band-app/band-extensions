@@ -192,7 +192,7 @@ describe("Android with stand-ins for adb, emulator and avdmanager", () => {
     ]);
   });
 
-  it("streams JPEG frames and turns touches into taps and swipes", async () => {
+  it("streams JPEG frames and turns touches into taps and swipes", { skip: !existsSync("/usr/bin/sips") }, async () => {
     const d = (await android.list()).find((x) => x.name === "Pixel_8");
     clear();
     const stream = await android.openStream(d, { profile: "direct" });
