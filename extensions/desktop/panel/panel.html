@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Desktop</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #ffffff;
+        --fg: #1a1a1a;
+        --muted: #6b6b6b;
+        --border: #d4d4d4;
+        --accent: #e8e8e8;
+        --danger: #c0392b;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root { --bg: #111111; --fg: #f0f0f0; --muted: #9a9a9a; --border: #333333; --accent: #262626; --danger: #e5706a; }
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body { display: flex; flex-direction: column; background: var(--bg); color: var(--fg); font: 12px/1.4 system-ui, -apple-system, sans-serif; }
+      header { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 8px; border-bottom: 1px solid var(--border); flex: none; }
+      #resolution { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+      #status { color: var(--muted); white-space: nowrap; }
+      #error { color: var(--danger); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+      #spacer { flex: 1; }
+      svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+      button { height: 24px; padding: 0 8px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--fg); font: inherit; cursor: pointer; }
+      button:hover:not(:disabled) { background: var(--accent); }
+      button[aria-pressed="true"] { background: var(--accent); }
+      button:disabled { opacity: 0.4; cursor: default; }
+      button[hidden], #error[hidden] { display: none; }
+      .icon { width: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+      /* The desktop is drawn on a dark ground whatever the theme. */
+      #screen { flex: 1; min-height: 0; position: relative; overflow: hidden; background: #0a0a0a; }
+      body[data-scale="actual"] #screen { overflow: auto; }
+      #notice { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 16px; color: #b0b0b0; pointer-events: none; }
+      #notice[hidden] { display: none; }
+      #notice.released { pointer-events: none; background: rgba(10, 10, 10, 0.55); }
+      body[data-layout="compact"] header { height: 44px; }
+      body[data-layout="compact"] button { height: 32px; }
+      body[data-layout="compact"] .icon { width: 36px; }
+      body[data-layout="compact"] #resolution { display: none; }
+    </style>
+  </head>
+  <body data-phase="connecting" data-layout="regular" data-scale="fit" data-control="false">
+    <header>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+      <span id="resolution" data-testid="desktop-panel__resolution">no signal</span>
+      <span id="status" data-testid="desktop-panel__status">Connecting</span>
+      <span id="error" data-testid="desktop-panel__error" role="alert" hidden></span>
+      <span id="spacer"></span>
+      <button id="fit" type="button" data-testid="desktop-panel__fit" aria-pressed="true" title="Scale the desktop down to fit">Fit</button>
+      <button id="actual" type="button" data-testid="desktop-panel__actual" aria-pressed="false" title="Draw the desktop at its own size">1:1</button>
+      <button id="fullscreen" type="button" class="icon" data-testid="desktop-panel__fullscreen" aria-label="Fullscreen" aria-pressed="false" title="Fullscreen" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+      </button>
+      <button id="reconnect" type="button" data-testid="desktop-panel__reconnect" hidden>Reconnect</button>
+    </header>
+    <div id="screen" data-testid="desktop-panel__screen">
+      <div id="notice" data-testid="desktop-panel__notice" hidden></div>
+    </div>
+    <script>
+      // Band posts band:hello as soon as the frame loads, which can be before the module below has
+      // finished loading noVNC. Keep the message (and its port) until panel.js is ready for it.
+      window.addEventListener("message", (event) => {
+        if (!window.__bandHello && event.data && event.data.type === "band:hello" && event.ports[0]) {
+          window.__bandHello = event;
+        }
+      });
+    </script>
+    <script type="module" src="panel.js"></script>
+  </body>
+</html>
