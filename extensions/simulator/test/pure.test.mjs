@@ -198,6 +198,7 @@ describe("panel shell helpers", () => {
     });
     assert.equal(t.scheme, "dark");
     assert.deepEqual(j(t.vars), { "--bg": "#101010", "--fg": "#eee", "--muted": "#888", "--border": "#333", "--accent": "#222" });
+    assert.ok(j(S.themeVarNames).includes("--bg"));
     const none = S.themeVars(undefined);
     assert.equal(none.scheme, null);
     assert.equal(Object.keys(none.vars).length, 0);
