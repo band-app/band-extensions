@@ -1,7 +1,3 @@
-import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import WebSocket from "ws";
 import type { Helper, ServeSimHelpers } from "./servesim.ts";
 
@@ -93,52 +89,66 @@ export function streamProfile(params: unknown): "hub" | "direct" {
   return profile === "direct" ? "direct" : "hub";
 }
 
-/** Halves a JPEG with `sips`, which ships with macOS (the only system the simulator runs on). */
-class FrameScaler {
-  private dir: Promise<string> | null = null;
-  private disposed = false;
+type Sharp = typeof import("sharp");
+let sharpModule: Promise<Sharp | null> | null = null;
 
-  async scale(frame: Buffer): Promise<Buffer> {
-    const size = jpegSize(frame);
-    if (!size || this.disposed) return frame;
-    const width = Math.max(1, Math.floor(size.width * HUB_SCALE));
-    const height = Math.max(1, Math.floor(size.height * HUB_SCALE));
-    try {
-      this.dir ??= mkdtemp(join(tmpdir(), "band-sim-frame-"));
-      const dir = await this.dir;
-      const input = join(dir, "in.jpg");
-      const output = join(dir, "out.jpg");
-      await writeFile(input, frame);
-      await new Promise<void>((resolve, reject) =>
-        execFile(
-          "/usr/bin/sips",
-          [
-            "-z",
-            String(height),
-            String(width),
-            "-s",
-            "formatOptions",
-            String(HUB_JPEG_QUALITY),
-            input,
-            "--out",
-            output,
-          ],
-          { timeout: 5000 },
-          (err) => (err ? reject(err) : resolve()),
-        ),
-      );
-      return await readFile(output);
-    } catch {
-      // The viewer gets the full frame rather than none.
-      return frame;
-    }
+/** sharp loads once, on the first hub frame. A missing or broken addon leaves frames at full size. */
+function loadSharp(): Promise<Sharp | null> {
+  sharpModule ??= import("sharp")
+    .then((m) => {
+      const sharp = ((m as { default?: Sharp }).default ?? m) as Sharp;
+      // One frame is in flight at a time, so a small libvips pool is enough and the cache only holds old frames.
+      sharp.cache(false);
+      sharp.concurrency(2);
+      return sharp;
+    })
+    .catch(() => null);
+  return sharpModule;
+}
+
+/** Halves a JPEG in process with sharp (libvips). No process is spawned per frame. */
+export async function scaleFrame(frame: Buffer): Promise<Buffer> {
+  const size = jpegSize(frame);
+  if (!size) return frame;
+  const width = Math.max(1, Math.floor(size.width * HUB_SCALE));
+  const height = Math.max(1, Math.floor(size.height * HUB_SCALE));
+  try {
+    const sharp = await loadSharp();
+    if (!sharp) return frame;
+    return await sharp(frame, { failOn: "none" })
+      .resize(width, height, { fit: "fill", kernel: "lanczos2" })
+      .jpeg({ quality: HUB_JPEG_QUALITY })
+      .toBuffer();
+  } catch {
+    // The viewer gets the full frame rather than none.
+    return frame;
   }
+}
 
-  async dispose(): Promise<void> {
-    this.disposed = true;
-    const dir = this.dir ? await this.dir.catch(() => null) : null;
-    this.dir = null;
-    if (dir) await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+/**
+ * Moves frames from `source` to `sink` through `encode`: one frame is encoded at a time, the
+ * frame taken is the newest one waiting (older ones were already replaced), and no more than
+ * `fps` frames a second go out. Ends `sink` when `source` ends.
+ */
+export async function pumpLatest<T, U>(
+  source: Latest<T>,
+  sink: Latest<U>,
+  encode: (frame: T) => Promise<U>,
+  fps: number = HUB_MAX_FPS,
+): Promise<void> {
+  const frames = source[Symbol.asyncIterator]();
+  let sentAt = 0;
+  try {
+    for (;;) {
+      const wait = sentAt + 1000 / fps - Date.now();
+      if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+      const next = await frames.next();
+      if (next.done) break;
+      sentAt = Date.now();
+      sink.push(await encode(next.value));
+    }
+  } finally {
+    sink.end();
   }
 }
 
@@ -216,28 +226,10 @@ export function openScreenStream(
   const abort = new AbortController();
   const latest = new Latest<Buffer>();
   const hid = openHid(helper);
-  const scaler = streamProfile(params) === "hub" ? new FrameScaler() : null;
-  // Raw frames wait here for the scaler, which takes the newest one at most `HUB_MAX_FPS` times a second.
-  const raw = scaler ? new Latest<Buffer>() : latest;
-
-  if (scaler) {
-    void (async () => {
-      const frames = raw[Symbol.asyncIterator]();
-      let sentAt = 0;
-      try {
-        for (;;) {
-          const wait = sentAt + 1000 / HUB_MAX_FPS - Date.now();
-          if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
-          const next = await frames.next();
-          if (next.done) break;
-          sentAt = Date.now();
-          latest.push(await scaler.scale(next.value));
-        }
-      } finally {
-        latest.end();
-      }
-    })();
-  }
+  const hub = streamProfile(params) === "hub";
+  // Raw frames wait here for the encoder, which takes the newest one at most `HUB_MAX_FPS` times a second.
+  const raw = hub ? new Latest<Buffer>() : latest;
+  if (hub) void pumpLatest(raw, latest, scaleFrame);
 
   void (async () => {
     try {
@@ -250,7 +242,7 @@ export function openScreenStream(
       // Ending the output closes the viewer's socket; it reconnects.
     } finally {
       raw.end();
-      if (!scaler) latest.end();
+      if (!hub) latest.end();
     }
   })();
 
@@ -312,7 +304,6 @@ export function openScreenStream(
       hid.close();
       raw.end();
       latest.end();
-      void scaler?.dispose();
     },
   };
 }

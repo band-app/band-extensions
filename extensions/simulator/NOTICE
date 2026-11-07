@@ -15,3 +15,9 @@ It ships these npm packages unmodified, in node_modules/:
   Its dist/ holds the screen capture and input helpers (a native Node module and helper binaries)
   that this extension runs. They use Apple's private SimulatorKit and CoreSimulator APIs.
 - ws 8, MIT License, Copyright (c) Einar Otto Stangvik and contributors. https://github.com/websockets/ws
+- sharp 0.34, Apache License 2.0, Copyright Lovell Fuller and contributors. https://github.com/lovell/sharp
+  The hub profile uses it to resize frames in process. It loads @img/sharp-darwin-arm64 and
+  @img/sharp-darwin-x64 (Apache License 2.0) and the libvips builds in @img/sharp-libvips-darwin-arm64
+  and @img/sharp-libvips-darwin-x64 (LGPL-3.0-or-later, https://github.com/lovell/sharp-libvips). libvips
+  is a separate dynamic library file in node_modules/@img/, so it can be replaced. Its dependencies
+  @img/colour (MIT), detect-libc (Apache License 2.0) and semver (ISC) ship alongside.

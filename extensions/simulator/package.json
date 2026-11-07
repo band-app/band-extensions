@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "serve-sim": "0.1.47",
+    "sharp": "^0.34.5",
     "ws": "^8.18.0"
   },
   "devDependencies": {
