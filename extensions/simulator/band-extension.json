@@ -1,7 +1,7 @@
 {
   "id": "simulator",
   "name": "Simulator",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "extensionApi": 1,
   "contributes": {
     "workerServices": [
