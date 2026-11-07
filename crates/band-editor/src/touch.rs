@@ -72,7 +72,7 @@ impl TouchShim {
             let st = state.clone();
             let handler = Closure::<dyn Fn(web_sys::PointerEvent)>::new(move |event: web_sys::PointerEvent| {
                 // Trusted touch pointers only: the replayed ones, a mouse and a pen go through.
-                if event.is_trusted() && st.enabled.get() && event.pointer_type() == "touch" {
+                if event.is_trusted() && st.enabled.get() && event.pointer_type() == "touch" && !is_native(event.target()) {
                     event.stop_immediate_propagation();
                 }
             });
@@ -96,6 +96,11 @@ impl State {
     fn handle(&self, kind: &str, event: &web_sys::TouchEvent) {
         // Our own synthetic events, and everything while the layout is regular.
         if !event.is_trusted() || !self.enabled.get() {
+            return;
+        }
+        // A touch that starts on page content of the app's own (a preview) belongs to the browser.
+        // Its moves and end find the shim idle and pass through too.
+        if kind == "touchstart" && is_native(event.target()) {
             return;
         }
         if event.touches().length() > 1 || (kind == "touchstart" && event.touches().length() != 1) {
@@ -231,4 +236,10 @@ fn swallow(event: &web_sys::TouchEvent) {
     if event.cancelable() {
         event.prevent_default();
     }
+}
+
+/// True for an element inside one marked `data-band-native`: the app draws it as HTML and wants
+/// the browser's own scrolling there.
+fn is_native(target: Option<web_sys::EventTarget>) -> bool {
+    target.and_then(|t| t.dyn_into::<web_sys::Element>().ok()).is_some_and(|e| e.closest("[data-band-native]").ok().flatten().is_some())
 }

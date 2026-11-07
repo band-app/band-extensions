@@ -13,6 +13,6 @@ serde_json = { workspace = true }
 js-sys = "0.3"
 wasm-bindgen = "0.2"
 web-sys = { version = "0.3", features = [
-    "Window", "MessageEvent", "MessagePort", "console", "AddEventListenerOptions", "EventTarget", "Touch", "TouchEvent", "TouchEventInit", "TouchInit", "TouchList",
+    "Window", "Element", "MessageEvent", "MessagePort", "console", "AddEventListenerOptions", "EventTarget", "Touch", "TouchEvent", "TouchEventInit", "TouchInit", "TouchList",
     "WheelEvent", "WheelEventInit", "PointerEvent", "PointerEventInit", "MouseEvent", "MouseEventInit",
 ] }
