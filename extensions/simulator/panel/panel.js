@@ -94,6 +94,7 @@
       else root.style.removeProperty(name);
     }
     if (scheme) root.style.colorScheme = scheme;
+    else root.style.removeProperty("color-scheme");
   }
 
   // The frame toggle is remembered per device. Storage can throw (private windows), so the choice
