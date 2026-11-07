@@ -10,7 +10,7 @@
 // loopback. DESKTOP_EXT_WORKER_DIST is this checkout's apps/worker/dist, mounted over the image's
 // worker. Native mode (a Linux machine with Xvfb and x11vnc): the worker runs as a child process.
 
-import { type ChildProcess, execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -58,7 +58,7 @@ interface Worker {
 let server: ServerHandle;
 let linux: Worker;
 let restricted: Worker | undefined;
-let native: { hostId: string; child: ChildProcess } | undefined;
+let native: Worker | undefined;
 const containers: string[] = [];
 
 const m = <T>(procedure: string, input: unknown) =>
@@ -314,7 +314,7 @@ describe.skipIf(!CAN_RUN)("desktop extension", () => {
   }, 300_000);
 
   afterAll(async () => {
-    native?.child.kill("SIGKILL");
+    native?.stop();
     restricted?.stop();
     linux?.stop();
     for (const name of containers) {
@@ -505,7 +505,7 @@ describe.skipIf(!CAN_RUN)("desktop extension", () => {
         labels: [],
       });
       const mac = nativeWorker(issued);
-      native = { hostId: issued.hostId, child: undefined as unknown as ChildProcess };
+      native = mac;
       const reason = await waitFor(
         async () => {
           const { hosts } = await q<{
