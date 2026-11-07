@@ -1,6 +1,6 @@
 // Copied from storytold/gridcraft apps/gridcraft-web/src/main.rs at rev e6b6b349708a (MIT OR Apache-2.0,
 // see LICENSE-MIT and LICENSE-APACHE at the repo root).
-// Changes: dropped the `?host=parent` text, added 'mod editor' and 'mod mcp', renamed the crate in messages.
+// Changes: dropped the `?host=parent` text, added 'mod editor', 'mod mcp' and 'mod sheet_html', renamed the crate in messages.
 
 //! GridCraft in the browser.
 //!
@@ -20,6 +20,9 @@
 mod editor;
 #[cfg(target_arch = "wasm32")]
 mod mcp;
+// The preview table is plain Rust over the engine, so its tests run natively.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+mod sheet_html;
 #[cfg(target_arch = "wasm32")]
 mod web;
 

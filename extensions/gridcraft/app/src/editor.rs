@@ -3,6 +3,12 @@
 //! Saving always sends the workbook in the format the file was opened in (`.xlsx` or `.csv`).
 //! File > Save inside GridCraft counts as a save request when it would download an `.xlsx`; other
 //! downloads (PDF export, Save As to another format) have nowhere to go and are dropped.
+//!
+//! In the compact layout the document opens in a preview first: an HTML table built from the
+//! engine's own values and styles (`sheet_html`), drawn by the page script in `index.html` over the
+//! egui canvas. The canvas keeps running underneath, so the document, its unsaved edits, its dirty
+//! state and the agent's tools are the same in both modes. "Edit" hides the preview and "Preview"
+//! shows it again; neither touches the workbook.
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
@@ -13,8 +19,23 @@ use band_editor::{Editor, Layout, Selection};
 use gridcraft_engine::model::Workbook;
 use gridcraft_ui_egui::{Inbox, Services, SheetApp};
 use serde_json::json;
+use wasm_bindgen::prelude::*;
 
 use crate::mcp::McpHost;
+use crate::sheet_html;
+
+#[wasm_bindgen]
+extern "C" {
+    /// The page script in `index.html`.
+    #[wasm_bindgen(js_namespace = gcPreview, js_name = setWake)]
+    fn preview_set_wake(f: &JsValue);
+    #[wasm_bindgen(js_namespace = gcPreview, js_name = drain)]
+    fn preview_drain() -> js_sys::Array;
+    #[wasm_bindgen(js_namespace = gcPreview, js_name = show)]
+    fn preview_show(on: bool, back: bool);
+    #[wasm_bindgen(js_namespace = gcPreview, js_name = render)]
+    fn preview_render(html: &str, sheets: &str, active: usize, more: bool, cut_cols: bool);
+}
 
 pub struct GridcraftEditor {
     app: Rc<RefCell<SheetApp>>,
@@ -31,6 +52,26 @@ pub struct GridcraftEditor {
     regular_ui: Option<RegularUi>,
     /// The selection last computed, with what it was computed from (the text is the costly part).
     selection: Option<(SelectionKey, Option<Selection>)>,
+    /// The layout is compact: the document opens in the preview.
+    compact: bool,
+    /// The person pressed Edit, so the egui editor shows instead of the preview.
+    editing: bool,
+    /// What the page shows now, to redraw only on a change.
+    drawn: Option<PreviewKey>,
+    /// The sheet the preview shows, when the person picked one. The workbook's active sheet is not changed.
+    view_sheet: Option<usize>,
+    /// Rows the preview draws; each page adds [`sheet_html::PAGE_ROWS`].
+    rows: u32,
+    /// What `show` last got, as (preview, back button).
+    shown: Option<(bool, bool)>,
+}
+
+#[derive(PartialEq, Clone, Copy)]
+struct PreviewKey {
+    uid: u64,
+    revision: u64,
+    sheet: usize,
+    rows: u32,
 }
 
 /// The interface settings the compact layout changes.
@@ -72,7 +113,77 @@ impl GridcraftEditor {
 
     pub fn new(app: Rc<RefCell<SheetApp>>, inbox: Inbox, ctx: egui::Context, want_save: Rc<Cell<bool>>) -> Self {
         let mcp = McpHost::new(app.clone(), ctx.clone());
-        Self { app, inbox, ctx, mcp, format: "xlsx".to_string(), want_save, sent: VecDeque::new(), regular_ui: None, selection: None }
+        let wake = {
+            let ctx = ctx.clone();
+            Closure::<dyn Fn()>::new(move || ctx.request_repaint())
+        };
+        preview_set_wake(wake.as_ref());
+        // The page keeps the callback for its lifetime.
+        wake.forget();
+        Self {
+            app,
+            inbox,
+            ctx,
+            mcp,
+            format: "xlsx".to_string(),
+            want_save,
+            sent: VecDeque::new(),
+            regular_ui: None,
+            selection: None,
+            compact: false,
+            editing: false,
+            drawn: None,
+            view_sheet: None,
+            rows: sheet_html::PAGE_ROWS,
+            shown: None,
+        }
+    }
+
+    /// The preview is what the person sees: compact layout and Edit not pressed.
+    fn previewing(&self) -> bool {
+        self.compact && !self.editing
+    }
+
+    /// Once per frame, after the bridge: take the page's button presses, then show or hide the
+    /// preview and redraw it if the document or the view changed.
+    pub fn frame(&mut self) {
+        for event in preview_drain().iter() {
+            let Some(event) = event.as_string() else { continue };
+            match event.as_str() {
+                "edit" => self.editing = true,
+                "back" => self.editing = false,
+                "more" => self.rows = self.rows.saturating_add(sheet_html::PAGE_ROWS),
+                other => {
+                    if let Some(index) = other.strip_prefix("sheet:").and_then(|n| n.parse().ok()) {
+                        self.view_sheet = Some(index);
+                        self.rows = sheet_html::PAGE_ROWS;
+                    }
+                }
+            }
+        }
+        let state = (self.previewing(), self.compact && self.editing);
+        if self.shown != Some(state) {
+            preview_show(state.0, state.1);
+            self.shown = Some(state);
+            // Show the editor's canvas again at once, and redraw it for the new size.
+            self.ctx.request_repaint();
+        }
+        if !self.previewing() {
+            return;
+        }
+        // No document yet (opening, or between a reload's close and open): keep what is drawn.
+        let Ok(app) = self.app.try_borrow() else { return };
+        let Some(doc) = app.session.active() else { return };
+        let (names, active) = sheet_html::sheet_names(&doc.wb);
+        let sheet = self.view_sheet.filter(|i| names.iter().any(|(n, _)| n == i)).or_else(|| names.get(active).map(|(i, _)| *i)).unwrap_or(0);
+        let key = PreviewKey { uid: doc.uid, revision: doc.revision, sheet, rows: self.rows };
+        if self.drawn == Some(key) {
+            return;
+        }
+        let rendered = sheet_html::render(&doc.wb, sheet, self.rows);
+        let names_json = serde_json::Value::Array(names.iter().map(|(i, n)| json!([i, n])).collect()).to_string();
+        preview_render(&rendered.html, &names_json, sheet, rendered.more, rendered.cut_cols);
+        self.drawn = Some(key);
     }
 
     fn push_to_inbox(&self, name: String, bytes: Vec<u8>) {
@@ -146,6 +257,7 @@ impl Editor for GridcraftEditor {
     }
 
     fn set_layout(&mut self, layout: Layout) {
+        self.compact = layout.is_compact();
         let Ok(mut app) = self.app.try_borrow_mut() else { return };
         if layout.is_compact() {
             if self.regular_ui.is_none() {
@@ -170,6 +282,11 @@ impl Editor for GridcraftEditor {
     }
 
     fn selection(&mut self) -> Option<Selection> {
+        // The preview reports no selection: the active cell of the editor underneath is not what
+        // the person is looking at, and following taps in the preview would need the engine to move it.
+        if self.previewing() {
+            return None;
+        }
         let mut app = self.app.try_borrow_mut().ok()?;
         let (key, range_count) = {
             let doc = app.session.active()?;
