@@ -597,6 +597,11 @@ export class AndroidBackend implements Backend {
       () => this.sizeOf(serial),
     );
     this.screens.add(stream);
+    const close = stream.close.bind(stream);
+    stream.close = () => {
+      this.screens.delete(stream);
+      close();
+    };
     return stream;
   }
 

@@ -16,11 +16,17 @@ interface Saved {
  */
 export class LayoutStore {
   private data: Saved | null = null;
+  private loading: Promise<Saved> | null = null;
   private readonly repoKeys = new Map<string, Promise<string>>();
   private writing: Promise<unknown> = Promise.resolve();
 
-  private async load(): Promise<Saved> {
-    if (this.data) return this.data;
+  private load(): Promise<Saved> {
+    if (this.data) return Promise.resolve(this.data);
+    this.loading ??= this.read();
+    return this.loading;
+  }
+
+  private async read(): Promise<Saved> {
     const out: Saved = { worktrees: {}, repos: {} };
     try {
       const parsed = JSON.parse(await readFile(join(getStateDir(), "layouts.json"), "utf8")) as Partial<Saved>;
