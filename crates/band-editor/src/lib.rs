@@ -14,4 +14,4 @@ mod touch;
 
 #[cfg(target_arch = "wasm32")]
 pub use bridge::{Bridge, Editor, message_text};
-pub use protocol::{Layout, Rect, Selection};
+pub use protocol::{Layout, Rect, Selection, Theme};

@@ -8,8 +8,8 @@
 //! arrives before the wasm has loaded (it stores the port as `window.bandHelloPort`).
 //!
 //! Band to editor: `init { file: { name, path, mime, bytes, readOnly }, theme, layout? }`,
-//! `requestSave`, `saved`, `saveFailed { error }`, `reload { bytes }`, `theme { tokens }`
-//! (ignored), `layout { layout }` (`"compact"` or `"regular"`) and `mcp { message }`.
+//! `requestSave`, `saved`, `saveFailed { error }`, `reload { bytes }`, `theme { mode, tokens }`
+//! (passed to [`Editor::set_theme`], which ignores it by default), `layout { layout }` (`"compact"` or `"regular"`) and `mcp { message }`.
 //!
 //! Editor to Band: `ready` (the file from `init` is open), `dirty { dirty }`,
 //! `save { bytes }` (a transferred `ArrayBuffer`), `selection { selection }` (a [`Selection`], or
@@ -29,7 +29,7 @@ use wasm_bindgen::JsCast as _;
 use wasm_bindgen::JsValue;
 use wasm_bindgen::closure::Closure;
 
-use crate::protocol::{Layout, Selection};
+use crate::protocol::{Layout, Selection, Theme};
 use crate::touch::TouchShim;
 
 const EXTENSION_API: f64 = 1.0;
@@ -82,6 +82,10 @@ pub trait Editor {
     fn selection(&mut self) -> Option<Selection> {
         None
     }
+
+    /// Band's theme, from `init` and again on each `theme` message. For an editor that draws
+    /// some of its own chrome as HTML; the default ignores it.
+    fn set_theme(&mut self, _theme: Theme) {}
 }
 
 #[derive(Clone, Default)]
@@ -192,6 +196,7 @@ impl Bridge {
                 Some("saved") => editor.save_answered(true),
                 Some("saveFailed") => editor.save_answered(false),
                 Some("layout") => self.layout(editor, &event),
+                Some("theme") => theme(editor, &event),
                 _ => {}
             }
         }
@@ -282,6 +287,7 @@ impl Bridge {
         };
         // A layout in `init` is applied before the file opens, so the first frame is already compact.
         self.layout(editor, event);
+        theme(editor, &get(event, "theme"));
         editor.open(&name, bytes);
         self.0.awaiting_ready.set(true);
     }
@@ -310,6 +316,22 @@ impl Bridge {
             None => port.post_message(&message).is_ok(),
         }
     }
+}
+
+/// Pass a `{ mode, tokens }` theme to the editor. Tokens that are not strings are skipped.
+fn theme(editor: &mut dyn Editor, value: &JsValue) {
+    let mode = get(value, "mode").as_string().unwrap_or_default();
+    let tokens = get(value, "tokens");
+    let mut out = Vec::new();
+    if tokens.is_object() {
+        for entry in js_sys::Object::entries(&js_sys::Object::from(tokens)).iter() {
+            let pair = js_sys::Array::from(&entry);
+            if let (Some(k), Some(v)) = (pair.get(0).as_string(), pair.get(1).as_string()) {
+                out.push((k, v));
+            }
+        }
+    }
+    editor.set_theme(Theme { mode, tokens: out });
 }
 
 /// The `message` field of an envelope as JSON text.
