@@ -1,5 +1,5 @@
 import { config } from "./config.ts";
-import { span } from "./tools.ts";
+import { CallTimeout, span } from "./tools.ts";
 import type { Backend, CreateSpec, OnPhase, Platform, SimDevice } from "./types.ts";
 
 export class UnknownDevice extends Error {}
@@ -34,7 +34,8 @@ function within<T>(work: Promise<T>, ms: number, message: string): Promise<T> {
       },
       (e) => {
         clearTimeout(timer);
-        reject(e);
+        // The child's own limit equals ours and fires first: report it with the device name and hint.
+        reject(e instanceof CallTimeout ? new LifecycleTimeout(message) : e);
       },
     );
   });
