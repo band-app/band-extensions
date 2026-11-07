@@ -1,6 +1,6 @@
 # band-extensions
 
-Official extensions for [Band](https://github.com/band-app/band). Five are editors for the ArtCraft apps: each is a web build of one app that Band frames in a sandboxed iframe, so a person edits a file in a Band tab and an agent edits the same open document through the app's MCP tools. One, the simulator, is a worker service with a panel and agent tools.
+Official extensions for [Band](https://github.com/band-app/band). Five are editors for the ArtCraft apps: each is a web build of one app that Band frames in a sandboxed iframe, so a person edits a file in a Band tab and an agent edits the same open document through the app's MCP tools. One, the simulator, is a worker service with a panel and agent tools. Two, typescript-lsp and python-lsp, give the code viewer a language server.
 
 | Extension | Opens | App |
 |---|---|---|
@@ -10,6 +10,8 @@ Official extensions for [Band](https://github.com/band-app/band). Five are edito
 | [figcraft](extensions/figcraft/README.md) | `*.figcraft`, `*.fig` | [FigCraft](https://github.com/storytold/figcraft) |
 | [vectorcraft](extensions/vectorcraft/README.md) | `*.svg`, `*.svgz`, `*.vectorcraft` | [VectorCraft](https://github.com/storytold/vectorcraft) |
 | [simulator](extensions/simulator/README.md) | a Simulator panel and nine `simulator_*` agent tools | iOS Simulator on a Mac worker, through [serve-sim](https://github.com/EvanBacon/serve-sim) |
+| [typescript-lsp](extensions/typescript-lsp/README.md) | a language server for `*.ts *.tsx *.js *.jsx` | [typescript-language-server](https://github.com/typescript-language-server/typescript-language-server) |
+| [python-lsp](extensions/python-lsp/README.md) | a language server for `*.py` | [Pyright](https://github.com/microsoft/pyright) |
 
 ## Install from Band
 

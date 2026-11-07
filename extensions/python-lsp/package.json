@@ -1,0 +1,15 @@
+{
+  "name": "band-extension-python-lsp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pyright as a Band extension: a language server for Python.",
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "node ../../scripts/check-language-server.mjs .",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "pyright": "1.1.414"
+  }
+}

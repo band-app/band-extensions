@@ -1,0 +1,19 @@
+{
+  "id": "typescript-lsp",
+  "name": "TypeScript language server",
+  "version": "0.1.0",
+  "extensionApi": 1,
+  "contributes": {
+    "languageServers": [
+      {
+        "id": "typescript",
+        "languages": ["typescript", "typescriptreact", "javascript", "javascriptreact"],
+        "files": ["*.ts", "*.tsx", "*.mts", "*.cts", "*.js", "*.jsx", "*.mjs", "*.cjs"],
+        "command": "node_modules/typescript-language-server/lib/cli.mjs",
+        "args": ["--stdio"],
+        "rootMarkers": ["package.json", "tsconfig.json", "jsconfig.json"],
+        "requires": ["node"]
+      }
+    ]
+  }
+}
