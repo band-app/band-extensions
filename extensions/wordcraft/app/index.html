@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>WordCraft</title>
   <script>
     // Band sends band:hello when the frame loads, before the wasm has compiled. Keep the port
@@ -10,6 +10,48 @@
     addEventListener("message", (e) => {
       if (!window.bandHelloPort && e.source === parent && e.data && e.data.type === "band:hello" && e.data.extensionApi === 1 && e.ports[0]) {
         window.bandHelloPort = e.ports[0];
+        // Read the theme from the same port. addEventListener does not start the port, so the
+        // app's own onmessage still receives every message, including the queued init.
+        e.ports[0].addEventListener("message", (m) => {
+          const d = m.data || {};
+          if (d.type === "init") applyTheme(d.theme);
+          else if (d.type === "theme") applyTheme(d);
+        });
+      }
+    });
+
+    // Band's theme colors become CSS variables (--band-<token>) for the preview's chrome only.
+    function applyTheme(theme) {
+      if (!theme || typeof theme !== "object") return;
+      const root = document.documentElement;
+      const tokens = theme.tokens && typeof theme.tokens === "object" ? theme.tokens : {};
+      for (const [name, value] of Object.entries(tokens)) {
+        if (typeof value === "string" && /^[A-Za-z][\w-]*$/.test(name) && /^[#\w(),.%\s\/-]{1,80}$/.test(value)) {
+          root.style.setProperty("--band-" + name.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase()), value);
+        }
+      }
+      if (theme.mode === "dark" || theme.mode === "light") root.dataset.theme = theme.mode;
+    }
+
+    // The compact layout's touch shim (crates/band-editor) turns a drag into wheel events and
+    // swallows taps, which would stop the preview from scrolling, zooming and selecting text. It
+    // listens on window in the capture phase, and this runs before it does, so touches that start
+    // in the preview or its bars never reach it.
+    for (const kind of ["touchstart", "touchmove", "touchend", "touchcancel"]) {
+      addEventListener(kind, (e) => {
+        if (e.target instanceof Element && e.target.closest("[data-native]")) e.stopImmediatePropagation();
+      }, { capture: true, passive: true });
+    }
+
+    // A link in the frame would navigate the editor away. In-document links scroll; others do nothing.
+    addEventListener("click", (e) => {
+      const a = e.target instanceof Element ? e.target.closest("#wc_doc a") : null;
+      if (!a) return;
+      e.preventDefault();
+      const href = a.getAttribute("href") || "";
+      if (href.startsWith("#") && href.length > 1) {
+        const target = document.querySelector("#wc_doc [id=\"" + CSS.escape(decodeURIComponent(href.slice(1))) + "\"]");
+        if (target) target.scrollIntoView();
       }
     });
   </script>
@@ -19,10 +61,51 @@
     #wordcraft_canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
     #wordcraft_loading { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
       color: #555; font: 14px system-ui, sans-serif; pointer-events: none; }
+
+    /* Compact reading view (preview.rs). Rust sets data-layout and data-view on <body>. */
+    :root {
+      --wc-bg: var(--band-background, #f4f4f5); --wc-fg: var(--band-foreground, #18181b);
+      --wc-border: var(--band-border, #d4d4d8); --wc-accent: var(--band-primary, #2563eb);
+      --wc-accent-fg: var(--band-primary-foreground, #fff);
+      color-scheme: light;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) { --wc-bg: var(--band-background, #18181b); --wc-fg: var(--band-foreground, #f4f4f5); --wc-border: var(--band-border, #3f3f46); color-scheme: dark; }
+    }
+    :root[data-theme="dark"] { --wc-bg: var(--band-background, #18181b); --wc-fg: var(--band-foreground, #f4f4f5); --wc-border: var(--band-border, #3f3f46); color-scheme: dark; }
+    #wc_preview { position: fixed; inset: 0; z-index: 10; display: none; flex-direction: column; background: var(--wc-bg); color: var(--wc-fg); font: 15px system-ui, sans-serif; }
+    #wc_editbar { position: fixed; top: 0; left: 0; right: 0; height: 44px; z-index: 10; display: none; align-items: center; gap: 8px; padding: 0 8px;
+      box-sizing: border-box; background: var(--wc-bg); color: var(--wc-fg); border-bottom: 1px solid var(--wc-border); font: 15px system-ui, sans-serif; }
+    body[data-layout="compact"][data-view="preview"] #wc_preview { display: flex; }
+    body[data-layout="compact"][data-view="edit"] #wc_editbar { display: flex; }
+    body[data-layout="compact"][data-view="edit"] #wordcraft_canvas { top: 44px; height: calc(100% - 44px); }
+    .wc-bar { flex: none; display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 8px; box-sizing: border-box; border-bottom: 1px solid var(--wc-border); }
+    .wc-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+    .wc-btn { flex: none; min-height: 32px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--wc-border); background: transparent; color: inherit; font: inherit; }
+    .wc-btn.primary { background: var(--wc-accent); border-color: var(--wc-accent); color: var(--wc-accent-fg); }
+    #wc_scroll { flex: 1; overflow: auto; -webkit-overflow-scrolling: touch; touch-action: pan-x pan-y pinch-zoom; padding: 12px 0 32px; }
+    /* The document keeps its own colors, so it sits on a white sheet whatever the theme is. */
+    #wc_doc { box-sizing: border-box; max-width: 44em; margin: 0 auto; padding: 16px; background: #fff; color: #000; min-height: 100%;
+      font-family: Aptos, Calibri, "Segoe UI", system-ui, sans-serif; font-size: 16px; line-height: 1.4; overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; }
+    #wc_doc > * { content-visibility: auto; contain-intrinsic-size: auto 3em; }
+    #wc_doc img { max-width: 100%; height: auto; }
+    #wc_doc table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: .5em 0; }
+    #wc_doc blockquote { margin: .5em 1.5em; font-style: italic; color: #404040; }
+    #wc_doc pre { background: #f5f5f5; padding: .5em; overflow-x: auto; font-size: 13px; }
+    #wc_doc p { margin: 0 0 .6em; }
+    #wc_doc a { color: #1155cc; }
+    .wc-note { color: #666; }
   </style>
 </head>
 <body>
   <canvas id="wordcraft_canvas"></canvas>
+  <div id="wc_preview" data-native>
+    <div class="wc-bar"><span class="wc-title" id="wc_title"></span><button class="wc-btn primary" id="wc_edit" type="button">Edit</button></div>
+    <div id="wc_scroll"><article id="wc_doc"><p class="wc-note">Loading&hellip;</p></article></div>
+  </div>
+  <div id="wc_editbar" data-native>
+    <button class="wc-btn" id="wc_back" type="button">&lsaquo; Preview</button><span class="wc-title" id="wc_title_edit"></span>
+  </div>
   <div id="wordcraft_loading">Loading WordCraft&hellip;</div>
 </body>
 </html>

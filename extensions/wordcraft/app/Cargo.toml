@@ -18,6 +18,7 @@ path = "src/tools_json.rs"
 band-editor = { workspace = true }
 wordcraft-doc = { workspace = true }
 wordcraft-engine = { workspace = true }
+wordcraft-formats = { workspace = true }
 wordcraft-mcp = { workspace = true }
 wordcraft-ui-egui = { workspace = true }
 wordcraft-fonts = { workspace = true }
