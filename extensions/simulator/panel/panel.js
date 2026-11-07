@@ -423,6 +423,19 @@
       menu.append(li);
       return;
     }
+    const own = deviceList.find((d) => d.group === "this");
+    if (own && current && own.udid !== current.udid) {
+      const use = document.createElement("li");
+      use.className = "use-own";
+      use.setAttribute("role", "option");
+      use.setAttribute("aria-selected", "false");
+      use.textContent = "Use this worktree's device";
+      use.addEventListener("click", () => {
+        closeMenu();
+        void choose(own);
+      });
+      menu.append(use);
+    }
     for (const group of Shell.pickerGroups(deviceList)) {
       const heading = document.createElement("li");
       heading.className = "group";
