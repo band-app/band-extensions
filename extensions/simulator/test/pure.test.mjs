@@ -4,9 +4,11 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
+import vm from "node:vm";
 import { config, setStateDir } from "../src/config.ts";
 import { ensureOpenShim, openShimScript } from "../src/shim.ts";
 import { compactTree } from "../src/servesim.ts";
+import { modelFromType } from "../src/devices.ts";
 import { jpegSize, mjpegFrames, serveSimButton, streamProfile } from "../src/stream.ts";
 
 describe("compactTree", () => {
@@ -141,5 +143,76 @@ describe("the open shim", () => {
     assert.equal(ensureOpenShim(where), where);
     assert.equal(readFileSync(join(where, "open"), "utf8"), openShimScript());
     assert.ok(statSync(join(where, "open")).mode & 0o100);
+  });
+});
+
+describe("panel shell helpers", () => {
+  const ctx = { globalThis: null };
+  ctx.globalThis = ctx;
+  vm.runInNewContext(readFileSync(new URL("../panel/shell.js", import.meta.url), "utf8"), ctx);
+  // Results come from another realm, so compare them as JSON.
+  const S = ctx.BandSimShell;
+  const j = (v) => JSON.parse(JSON.stringify(v));
+
+  it("fits a framed phone in the room and keeps the screen's aspect", () => {
+    const l = S.layout({ width: 600, height: 700 }, { width: 402, height: 874 }, true);
+    assert.ok(l.shell.height <= 700 && l.shell.width + 2 * l.button <= 600);
+    assert.ok(Math.abs(l.screen.width / l.screen.height - 402 / 874) < 0.01);
+    assert.equal(l.shell.width, l.screen.width + 2 * l.bezel);
+    assert.ok(l.bezel > 0 && l.screenRadius > l.bezel);
+  });
+
+  it("rotates: a landscape screen is wider than tall and fits as well", () => {
+    const l = S.layout({ width: 800, height: 400 }, { width: 874, height: 402 }, true);
+    assert.ok(l.screen.width > l.screen.height);
+    assert.ok(l.shell.height <= 400 && l.shell.width + 2 * l.button <= 800);
+  });
+
+  it("without the frame the screen fills the room and has no bezel", () => {
+    const l = S.layout({ width: 500, height: 500 }, { width: 402, height: 874 }, false);
+    assert.equal(l.bezel, 0);
+    assert.equal(l.button, 0);
+    assert.ok(l.screen.height >= 497 && l.screen.height <= 498);
+  });
+
+  it("gives an iPad-shaped screen small corners and a tall phone big ones", () => {
+    const pad = S.layout({ width: 900, height: 900 }, { width: 820, height: 1180 }, true);
+    const phone = S.layout({ width: 900, height: 900 }, { width: 402, height: 874 }, true);
+    assert.ok(pad.screenRadius / pad.screen.width < phone.screenRadius / phone.screen.width);
+  });
+
+  it("words the boot phases", () => {
+    assert.equal(S.bootText({ phase: "creating" }), "Creating device\u2026");
+    assert.equal(S.bootText({ phase: "cloning" }), "Creating device\u2026");
+    assert.equal(S.bootText({ phase: "booting", model: "iPhone 17 Pro", name: "Band \u2013 x" }), "Booting iPhone 17 Pro\u2026");
+    assert.equal(S.bootText({ phase: "booting", name: "Band \u2013 x" }), "Booting Band \u2013 x\u2026");
+    assert.equal(S.bootText({ type: "booting" }), "Booting\u2026");
+    assert.equal(modelFromType("com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro"), "iPhone 17 Pro");
+    assert.equal(modelFromType(undefined), undefined);
+  });
+
+  it("maps Band's theme tokens, with or without the -- prefix, and leaves the rest alone", () => {
+    const t = S.themeVars({
+      mode: "dark",
+      tokens: { "--background": "#101010", foreground: " #eee ", "--muted-foreground": "#888", border: "#333", accent: "#222" },
+    });
+    assert.equal(t.scheme, "dark");
+    assert.deepEqual(j(t.vars), { "--bg": "#101010", "--fg": "#eee", "--muted": "#888", "--border": "#333", "--accent": "#222" });
+    const none = S.themeVars(undefined);
+    assert.equal(none.scheme, null);
+    assert.equal(Object.keys(none.vars).length, 0);
+  });
+
+  it("groups the picker: this worktree, other worktrees, then the person's devices", () => {
+    const list = [
+      { name: "A", group: "mine" },
+      { name: "B", group: "other" },
+      { name: "C", group: "this" },
+      { name: "D", group: "other" },
+    ];
+    const g = S.pickerGroups(list);
+    assert.deepEqual(j(g.map((x) => x.label)), ["This worktree", "Other worktrees", "My devices"]);
+    assert.deepEqual(j(g[1].devices.map((d) => d.name)), ["B", "D"]);
+    assert.deepEqual(j(S.pickerGroups([{ name: "Z", group: "mine" }]).map((x) => x.key)), ["mine"]);
   });
 });

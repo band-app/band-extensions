@@ -12,6 +12,8 @@
         --muted: #6b6b6b;
         --border: #d4d4d4;
         --accent: #e8e8e8;
+        --accent-fg: var(--fg);
+        --danger: #c0392b;
       }
       @media (prefers-color-scheme: dark) {
         :root { --bg: #111111; --fg: #f0f0f0; --muted: #9a9a9a; --border: #333333; --accent: #262626; }
@@ -46,8 +48,8 @@
       #picker-version { color: var(--muted); white-space: nowrap; }
       #menu { position: absolute; right: 0; top: 32px; z-index: 10; min-width: 260px; max-height: 60vh; overflow: auto; margin: 0; padding: 4px; list-style: none; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3); }
       #menu[hidden] { display: none; }
-      #menu li { display: flex; gap: 8px; align-items: center; padding: 4px 8px; border-radius: 4px; cursor: pointer; white-space: nowrap; }
-      #menu li:hover, #menu li[aria-selected="true"] { background: var(--accent); }
+      #menu li[role="option"] { display: flex; gap: 8px; align-items: center; padding: 4px 8px; border-radius: 4px; cursor: pointer; white-space: nowrap; }
+      #menu li[role="option"]:hover, #menu li[aria-selected="true"] { background: var(--accent); }
       #menu .name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
       #menu .meta { color: var(--muted); }
       #menu .empty { color: var(--muted); cursor: default; }
@@ -61,7 +63,7 @@
         font: inherit;
         cursor: pointer;
       }
-      button:hover:not(:disabled) { background: var(--accent); }
+      button:hover:not(:disabled) { background: var(--accent); color: var(--accent-fg); }
       button:disabled { opacity: 0.4; cursor: default; }
       button[hidden] { display: none; }
       main {
@@ -71,18 +73,35 @@
         align-items: center;
         justify-content: center;
         padding: 8px;
+        background: var(--bg);
       }
       canvas {
-        max-width: 100%;
-        max-height: 100%;
-        border: 1px solid var(--border);
-        border-radius: 6px;
         touch-action: none;
         outline: none;
         cursor: default;
       }
       body[data-phase="live"] canvas { cursor: pointer; }
-      #error { color: #c0392b; max-width: 40ch; }
+      #error-wrap { position: relative; flex: none; }
+      #error-wrap[hidden] { display: none; }
+      #error-btn { color: var(--danger); }
+      #error-pop { position: absolute; left: 0; top: 32px; z-index: 10; width: max-content; max-width: min(40ch, 80vw); padding: 8px; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3); overflow-wrap: anywhere; }
+      #error-pop[hidden] { display: none; }
+      #stage { position: relative; flex: none; }
+      #shell { position: absolute; inset: 0; background: #1c1c1e; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18), 0 2px 10px rgba(0, 0, 0, 0.35); }
+      #stage[data-framed="false"] #shell { display: none; }
+      .side { position: absolute; background: #2c2c2e; border-radius: 2px; }
+      #screen-box { position: absolute; overflow: hidden; background: #000; }
+      #stage[data-framed="false"] #screen-box { border: 1px solid var(--border); }
+      #screen-box canvas { display: block; width: 100%; height: 100%; border: 0; border-radius: 0; }
+      #boot { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: #000; color: #d0d0d0; text-align: center; padding: 16px; }
+      body[data-phase="connecting"] #boot, body[data-phase="booting"] #boot { display: flex; }
+      .spinner { width: 28px; height: 28px; border: 3px solid rgba(255, 255, 255, 0.2); border-top-color: #fff; border-radius: 50%; animation: spin 0.8s linear infinite; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }
+      #off { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: #000; color: #8a8a8a; }
+      body[data-phase="off"] #off, body[data-phase="closed"] #off { display: flex; }
+      #menu .group { padding: 6px 8px 2px; color: var(--muted); font-size: 11px; cursor: default; }
+      #menu .group:hover { background: transparent; }
     </style>
   </head>
   <body data-phase="connecting" data-layout="regular">
@@ -90,7 +109,12 @@
       <svg id="phone" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></svg>
       <span id="device" data-testid="sim-panel__device">iOS Simulator</span>
       <span id="status" data-testid="sim-panel__status">Connecting</span>
-      <span id="error" data-testid="sim-panel__error" hidden></span>
+      <span id="error-wrap" hidden>
+        <button id="error-btn" class="icon" type="button" data-testid="sim-panel__error" aria-label="Show error" aria-expanded="false" title="Error">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><path d="M12 16h.01"/></svg>
+        </button>
+        <div id="error-pop" role="alert" data-testid="sim-panel__error-text" hidden></div>
+      </span>
       <span id="spacer"></span>
       <div id="picker-wrap">
         <button id="picker" type="button" data-testid="sim-panel__picker" aria-label="Choose device" aria-haspopup="listbox" aria-expanded="false" title="Choose device">
@@ -100,6 +124,9 @@
         </button>
         <ul id="menu" role="listbox" aria-label="Devices" data-testid="sim-panel__menu" hidden></ul>
       </div>
+      <button id="frame-toggle" class="icon" type="button" data-testid="sim-panel__frame" aria-label="Hide frame" aria-pressed="true" title="Hide frame">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3"/><rect x="8" y="6" width="8" height="12" rx="1"/></svg>
+      </button>
       <button id="rotate" class="icon" type="button" data-testid="sim-panel__rotate" aria-label="Rotate" title="Rotate" disabled>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
       </button>
@@ -112,8 +139,24 @@
       <button id="reconnect" type="button" data-testid="sim-panel__reconnect" hidden>Reconnect</button>
     </header>
     <main>
-      <canvas id="screen" tabindex="0" width="1" height="1" data-testid="sim-panel__canvas" aria-label="iOS Simulator screen"></canvas>
+      <div id="stage" data-framed="true" data-testid="sim-panel__stage">
+        <div id="shell" data-testid="sim-panel__shell" aria-hidden="true">
+          <span class="side" id="side-action"></span>
+          <span class="side" id="side-up"></span>
+          <span class="side" id="side-down"></span>
+          <span class="side" id="side-power"></span>
+        </div>
+        <div id="screen-box" data-testid="sim-panel__screen">
+          <canvas id="screen" tabindex="0" width="1" height="1" data-testid="sim-panel__canvas" aria-label="iOS Simulator screen"></canvas>
+          <div id="boot" role="status" data-testid="sim-panel__boot">
+            <div class="spinner" aria-hidden="true"></div>
+            <div id="boot-text" data-testid="sim-panel__boot-text">Connecting…</div>
+          </div>
+          <div id="off" data-testid="sim-panel__off"></div>
+        </div>
+      </div>
     </main>
+    <script src="shell.js"></script>
     <script src="panel.js"></script>
   </body>
 </html>
