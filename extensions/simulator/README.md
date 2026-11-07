@@ -69,7 +69,7 @@ serve-sim runs `open -a Simulator`, which puts a visible Simulator window in fro
 
 ## Streams
 
-Band adds a `profile` to the params of every stream it opens. With `"direct"` (the desktop app, for a worktree on this Mac's own worker, over the worker's loopback listener) the frames are serve-sim's own, at full size and rate. With `"hub"` (every other path) the service halves each side and sends at most 15 frames a second. A stream with no profile gets the `hub` one.
+Band adds a `profile` to the params of every stream it opens. With `"direct"` (the desktop app, for a worktree on this Mac's own worker, over the worker's loopback listener) the frames are serve-sim's own, at full size and rate. With `"hub"` (every other path) the service halves each side in process with sharp (libvips, quality 70, no process per frame) and sends at most 15 frames a second. One frame is encoded at a time and older waiting frames are dropped, so a slow viewer sees the newest frame. The archive carries sharp's prebuilds for darwin-arm64 and darwin-x64 (about 32 MB). `node bench-hub.mjs` measures it. A stream with no profile gets the `hub` one.
 
 ## Differences from the bundled plugin
 
