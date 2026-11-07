@@ -6,7 +6,7 @@ import { after, before, describe, it } from "node:test";
 import { setStateDir } from "../src/config.ts";
 import { AndroidBackend, avdPrefix, inputTextArg, parseAdbDevices, parseAvdConfig } from "../src/android.ts";
 import { DeviceSet } from "../src/devices.ts";
-import { Fleet } from "../src/fleet.ts";
+import { Fleet, NoRoom } from "../src/fleet.ts";
 import { makeAndroidSdk, script } from "./fakes.mjs";
 
 // Stand-ins for xcrun, adb, emulator and avdmanager are scripts on disk. They keep their state in
@@ -100,6 +100,37 @@ else { console.error("unexpected " + cmd); process.exit(1); }
     assert.ok(a.owned && b.owned);
     await assert.rejects(set.create({ ...spec, deviceType: "x" }), /not supported/);
     assert.equal((await set.list()).length, 3);
+  });
+});
+
+describe("a simctl that hangs", () => {
+  it("S1 kills the hung shutdown by its pid and reports the stuck call; a device shutting down is not off", async () => {
+    const pidFile = join(dir, "stuck.pid");
+    script(
+      join(dir, "stuck-bin", "xcrun"),
+      `const fs = require("node:fs");
+const [, cmd] = process.argv.slice(2);
+if (cmd === "list") { console.log(JSON.stringify({ devices: { "com.apple.CoreSimulator.SimRuntime.iOS-26-5": [{ udid: "U-S", name: "iPhone", state: "Shutting Down" }] } })); }
+else { fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); process.on("SIGTERM", () => {}); setInterval(() => {}, 1000); }
+`,
+    );
+    const oldPath = process.env.PATH;
+    const oldLimit = process.env.BAND_SIMULATOR_SHUTDOWN_TIMEOUT_MS;
+    process.env.PATH = `${join(dir, "stuck-bin")}:${oldPath}`;
+    process.env.BAND_SIMULATOR_SHUTDOWN_TIMEOUT_MS = "300";
+    try {
+      const set = new DeviceSet();
+      const [d] = await set.list();
+      assert.equal(d.state, "stopping");
+      await assert.rejects(set.shutdown(d), /xcrun simctl shutdown.*did not finish in 300 ms/s);
+      const pid = Number(readFileSync(pidFile, "utf8"));
+      await new Promise((r) => setTimeout(r, 200));
+      assert.throws(() => process.kill(pid, 0), "the stuck process is gone");
+    } finally {
+      process.env.PATH = oldPath;
+      if (oldLimit === undefined) delete process.env.BAND_SIMULATOR_SHUTDOWN_TIMEOUT_MS;
+      else process.env.BAND_SIMULATOR_SHUTDOWN_TIMEOUT_MS = oldLimit;
+    }
   });
 });
 
@@ -236,6 +267,93 @@ describe("Fleet limits", () => {
     assert.deepEqual(ios.calls, ["boot ios:mine", "shutdown ios:mine", "boot ios:d"]);
     await fleet.ensureOn(droid[1]);
     assert.deepEqual(android.calls, ["boot android:avd:B"]);
+  });
+
+  describe("lifecycle limits", () => {
+    const hang = () => new Promise(() => {});
+    const withEnv = async (vars, fn) => {
+      const old = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]));
+      Object.assign(process.env, vars);
+      try {
+        await fn();
+      } finally {
+        for (const [k, v] of Object.entries(old)) v === undefined ? delete process.env[k] : (process.env[k] = v);
+      }
+    };
+
+    it("S1 abandons a shutdown that never returns and lets the queue move on", async () => {
+      await withEnv({ BAND_SIMULATOR_SHUTDOWN_TIMEOUT_MS: "100" }, async () => {
+        const devices = [dev("ios:a", true, "on"), dev("ios:b", true, "on"), dev("ios:c", true)];
+        const ios = stubBackend("ios", devices, 2);
+        ios.shutdown = hang;
+        const fleet = new Fleet({ ios, android: stubBackend("android", [], 2) });
+        await assert.rejects(fleet.exclusive(() => fleet.ensureOn(devices[2])), /Shutting down ios:a did not finish in 100 ms.*abandoned.*simctl shutdown/s);
+        let ran = false;
+        await fleet.exclusive(async () => (ran = true));
+        assert.ok(ran, "the queue moved on");
+      });
+    });
+
+    it("S5 abandons a boot that hangs", async () => {
+      await withEnv({ BAND_SIMULATOR_BOOT_TIMEOUT_MS: "100", BAND_SIMULATOR_BOOT_TIMEOUT_ANDROID_MS: "100" }, async () => {
+        for (const platform of ["ios", "android"]) {
+          const devices = [dev(`${platform}:x`, true, "off", platform)];
+          const backend = stubBackend(platform, devices, 2);
+          backend.boot = hang;
+          const fleet = new Fleet({ ios: stubBackend("ios", [], 2), android: stubBackend("android", [], 2), [platform]: backend });
+          await assert.rejects(fleet.ensureOn(devices[0]), /Booting .* did not finish in 100 ms and was abandoned/);
+        }
+      });
+    });
+
+    it("S2 neither counts nor picks a device that is booting or shutting down", async () => {
+      const devices = [dev("ios:a", true, "on"), dev("ios:stop", true, "stopping"), dev("ios:start", true, "booting"), dev("ios:c", true)];
+      const ios = stubBackend("ios", devices, 2);
+      const fleet = new Fleet({ ios, android: stubBackend("android", [], 2) });
+      await fleet.ensureOn(devices[3]);
+      assert.deepEqual(ios.calls, ["boot ios:c"]);
+      const droid = [dev("android:avd:A", true, "booting", "android"), dev("android:avd:B", true, "on", "android"), dev("android:avd:C", true, "off", "android")];
+      const android = stubBackend("android", droid, 2);
+      await new Fleet({ ios: stubBackend("ios", [], 2), android }).ensureOn(droid[2]);
+      assert.deepEqual(android.calls, ["boot android:avd:C"]);
+    });
+
+    it("refuses to start a device that is shutting down", async () => {
+      const devices = [dev("ios:stop", true, "stopping")];
+      const fleet = new Fleet({ ios: stubBackend("ios", devices, 2), android: stubBackend("android", [], 2) });
+      await assert.rejects(fleet.ensureOn(devices[0]), /is shutting down/);
+    });
+
+    it("S3 never shuts down a shown device and says which ones are shown", async () => {
+      const devices = [dev("ios:a", true, "on"), dev("ios:b", true, "on"), dev("ios:c", true)];
+      const ios = stubBackend("ios", devices, 2);
+      const fleet = new Fleet({ ios, android: stubBackend("android", [], 2) });
+      fleet.isWatched = () => true;
+      await assert.rejects(fleet.ensureOn(devices[2]), (err) => err instanceof NoRoom && err.shown.map((d) => d.id).join() === "ios:a,ios:b" && /Shut one down/.test(err.message));
+      assert.deepEqual(ios.calls, []);
+      // Shutting one down (the pane's button) makes room.
+      await fleet.turnOff(devices[0]);
+      await fleet.ensureOn(devices[2]);
+      assert.deepEqual(ios.calls, ["shutdown ios:a", "boot ios:c"]);
+    });
+
+    it("S3 shuts down an unwatched device before giving up on a watched one", async () => {
+      const devices = [dev("ios:a", true, "on"), dev("ios:b", true, "on"), dev("ios:c", true)];
+      const ios = stubBackend("ios", devices, 2);
+      const fleet = new Fleet({ ios, android: stubBackend("android", [], 2) });
+      fleet.isWatched = (id) => id === "ios:a";
+      await fleet.ensureOn(devices[2]);
+      assert.deepEqual(ios.calls, ["shutdown ios:b", "boot ios:c"]);
+    });
+
+    it("S4 streams a device that is on without waiting for a stuck shutdown in the queue", async () => {
+      const devices = [dev("ios:on", true, "on"), dev("ios:off", true)];
+      const fleet = new Fleet({ ios: stubBackend("ios", devices, 2), android: stubBackend("android", [], 2) });
+      void fleet.exclusive(hang);
+      const got = await Promise.race([fleet.open("ios:on"), new Promise((r) => setTimeout(() => r("waited"), 500))]);
+      assert.equal(got.id, "ios:on");
+      assert.equal(await Promise.race([fleet.open("ios:off"), new Promise((r) => setTimeout(() => r("waited"), 200))]), "waited");
+    });
   });
 
   it("resolves a device by id or by name and refuses an ambiguous name", async () => {

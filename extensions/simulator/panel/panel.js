@@ -149,8 +149,28 @@
       if (stored !== this.framed) this.setFramed(stored, false);
     }
 
-    showError(text) {
-      this.q(".error-pop").textContent = text;
+    /** `shown` are devices the person can shut down to make room, each with a button that does so and retries. */
+    showError(text, shown = []) {
+      const pop = this.q(".error-pop");
+      pop.textContent = text;
+      for (const d of shown) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "shutdown-shown";
+        btn.dataset.id = d.id;
+        btn.textContent = `Shut down ${d.name}`;
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          try {
+            await call("shutdown", { device: d.id });
+            this.retries = 0;
+            this.openStream();
+          } catch (err) {
+            this.showError(err.message);
+          }
+        });
+        pop.append(document.createElement("br"), btn);
+      }
       this.q(".error-wrap").hidden = !text;
       if (!text) this.setErrorOpen(false);
     }
@@ -307,7 +327,11 @@
               this.setPhase("off");
             } else if (info.type === "error") {
               this.fatal = true;
-              this.showError(String(info.message ?? "The device could not be opened"));
+              this.showError(
+                String(info.message ?? "The device could not be opened"),
+                info.reason === "no-room" && Array.isArray(info.shown) ? info.shown : [],
+              );
+              if (info.reason === "no-room") this.setErrorOpen(true);
             }
           } catch {
             // Not JSON: ignored.
@@ -541,7 +565,7 @@
       li.dataset.id = d.id;
       li.setAttribute("aria-selected", String(d.id === this.device?.id));
       if (isTaken) li.setAttribute("aria-disabled", "true");
-      const state = d.state === "on" ? "On" : d.state === "booting" ? "Booting" : "Off";
+      const state = d.state === "on" ? "On" : d.state === "booting" ? "Booting" : d.state === "stopping" ? "Shutting down" : "Off";
       for (const [cls, text] of [["name", d.name], ["meta", d.os], ["meta", isTaken ? "In another pane" : state]]) {
         const span = document.createElement("span");
         span.className = cls;

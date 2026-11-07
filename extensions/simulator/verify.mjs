@@ -45,6 +45,8 @@ window.svc = {
   queue: [],
   polls: [],
   shows: [],
+  shutdowns: [],
+  noRoom: null,
   androidReady: true,
   devices: [
     { id: "ios:U-MINE", platform: "ios", name: "iPhone 15", state: "off", os: "iOS 17.5", model: "iPhone 15", owned: false },
@@ -85,6 +87,11 @@ window.frame = (theme) => {
         const msg = (o) => port.postMessage({ type: "stream.message", id: m.id, text: JSON.stringify(o) });
         if (!dev) { msg({ type: "error", message: "No device has the id " + m.params.device }); port.postMessage({ type: "stream.closed", id: m.id, code: 1000, reason: "" }); return; }
         msg({ type: "booting" });
+        if (window.svc.noRoom === dev.id) {
+          msg({ type: "error", message: dev.name + " cannot start: 2 iOS simulators are on and iPhone 15, iPad Air are shown in a pane. Shut one down to make room.", reason: "no-room", shown: [{ id: "ios:U-MINE", name: "iPhone 15" }, { id: "ios:U-3", name: "iPad Air" }] });
+          port.postMessage({ type: "stream.closed", id: m.id, code: 1000, reason: "" });
+          return;
+        }
         msg({ type: "booting", phase: "booting", name: dev.name, model: dev.model });
         await new Promise((r) => setTimeout(r, 150));
         const android = dev.platform === "android";
@@ -102,6 +109,7 @@ window.frame = (theme) => {
           const d = [...s.devices, ...(s.created ?? [])].find((x) => x.id === m.params.device);
           s.queue.push({ seq: ++s.seq, type: "show", paneId: "p1", device: { id: d.id, platform: d.platform, name: d.name } });
         }
+        if (m.method === "shutdown") { s.shutdowns.push(m.params.device); s.noRoom = null; }
         if (m.method === "saveLayout") { s.layout = m.params.layout; s.saves.push(m.params.layout); }
         if (m.method === "devices") result = { devices: [...s.devices, ...(s.created ?? [])], platforms: { ios: { ok: true }, android: s.androidReady ? { ok: true } : { ok: false, reason: "The Android SDK was not found. Set ANDROID_HOME." } } };
         if (m.method === "options") result = {
@@ -354,6 +362,20 @@ await queueEvent({ type: "offer", device: { id: "ios:U-3", platform: "ios", name
 await sleep(2600);
 check("S4 a device a pane already shows is not offered", (await offerBar(f)).length === 0);
 await tab.screenshot({ path: join(out, "s4-after-show.png") });
+
+// No room: every booted device is shown, so the pane gets an error with a button per shown device.
+await tab.evaluate(() => { window.svc.noRoom = "android:avd:Pixel_8"; });
+await pickDevice(f, '.pane[data-pane="p2"]', "android:avd:Pixel_8");
+const roomText = await f.evaluate(() => document.querySelector('.pane[data-pane="p2"] .error-pop').textContent);
+const roomButtons = await f.evaluate(() => [...document.querySelectorAll('.pane[data-pane="p2"] .error-pop button.shutdown-shown')].map((b) => b.textContent));
+check("S3 a full limit shows an error naming the shown devices", /cannot start/.test(roomText) && /iPhone 15, iPad Air are shown/.test(roomText), roomText);
+check("S3 the error has a button to shut down each shown device", roomButtons.join() === "Shut down iPhone 15,Shut down iPad Air", roomButtons.join());
+await f.evaluate(() => { document.querySelector('.pane[data-pane="p2"] .error-pop').hidden = false; });
+await tab.screenshot({ path: join(out, "s3-no-room.png") });
+const opensBeforeRoom = (await opens()).length;
+await f.click('.pane[data-pane="p2"] .error-pop button.shutdown-shown');
+await sleep(900);
+check("S3 the button shuts that device down and retries the open", (await tab.evaluate(() => window.svc.shutdowns.join())) === "ios:U-MINE" && (await opens()).length > opensBeforeRoom && (await paneInfo(f))[1].phase === "live", JSON.stringify(await paneInfo(f)));
 
 // Android: the picker explains a missing SDK and a missing system image.
 await f.click('.pane[data-pane="p2"] .picker');
