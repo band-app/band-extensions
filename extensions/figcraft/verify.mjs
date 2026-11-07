@@ -321,6 +321,149 @@ try {
     await page.close();
   }
 
+  // The compact preview (P1 to P5): plain HTML built from the engine's export, with an Edit button to the editor.
+  {
+    const inFrame = (page) => page.frames().find((f) => f !== page.mainFrame() && f.url().startsWith(buildBase));
+    const state = (page) =>
+      inFrame(page).evaluate(() => {
+        const q = (s) => document.querySelector(s);
+        const scroller = q("#fp_scroll");
+        return {
+          mode: q("#fp").dataset.mode,
+          previewShown: !q("#fp").hidden,
+          backShown: !q("#fp_back").hidden,
+          canvasVisible: getComputedStyle(q("#figcraft_canvas")).visibility,
+          cards: document.querySelectorAll(".fp_card").length,
+          ready: document.querySelectorAll('.fp_card[data-state="ready"]').length,
+          names: Array.from(document.querySelectorAll("#fp_nav button"), (b) => b.textContent),
+          contentWidth: q("#fp_content").offsetWidth,
+          viewWidth: scroller.clientWidth,
+          scrollTop: scroller.scrollTop,
+          scrollHeight: scroller.scrollHeight,
+          background: getComputedStyle(q("#fp")).backgroundColor,
+        };
+      });
+    const waitState = (page, test, what, timeout = 30000) => inFrame(page).waitForFunction(test, undefined, { timeout }).catch(() => console.log("  timeout waiting for", what));
+    const send = (page, id, msg) => page.evaluate(([i, m]) => window.send(i, m), [id, msg]);
+    const openAs = async (page, name, bytes, layout) => {
+      const id = await page.evaluate(() => window.frame());
+      await page.evaluate((i) => window.whenHello(i), id);
+      await page.evaluate(([i, n, b, l]) => {
+        const msg = { type: "init", file: { name: n, path: n, mime: "", bytes: b, readOnly: false }, theme: { mode: "light", tokens: {} } };
+        if (l) msg.layout = l;
+        window.send(i, msg);
+      }, [id, name, Array.from(bytes), layout]);
+      await waitLog(page, id, "ready");
+      return id;
+    };
+    const sizeFrame = (page, w, h) =>
+      page.evaluate(([w, h]) => {
+        document.body.style.margin = "0";
+        document.querySelector("iframe[data-editor]").style.cssText = `width:${w}px;height:${h}px;border:0;display:block`;
+      }, [w, h]);
+
+    // A second file with one more frame, to tell a reload from the first open.
+    let reloaded;
+    {
+      const page = await newPage();
+      const id = await open(page, "again.figcraft", figcraft);
+      await sleep(1500);
+      await call(page, id, "create_node", { type: "frame", name: "AfterReload", x: 300, y: 0, width: 100, height: 100 });
+      const made = await call(page, id, "run_command", { command: "file.saveAs", params: { data: true } });
+      reloaded = Buffer.from(base64Of(made) ?? "", "base64");
+      await page.close();
+    }
+
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, deviceScaleFactor: 2 });
+    const page = await ctx.newPage();
+    page.on("pageerror", (e) => console.log("  [pageerror]", String(e).slice(0, 300)));
+    await page.goto(pageUrl);
+    const cdp = await ctx.newCDPSession(page);
+    const touch = (type, points) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: points.map(([x, y], i) => ({ x, y, id: i })) });
+    try {
+      const id = await openAs(page, "design.figcraft", figcraft, "compact");
+      await sizeFrame(page, 390, 844);
+      // Enough frames that the preview scrolls.
+      for (let n = 1; n <= 5; n++) await call(page, id, "create_node", { type: "frame", name: `Tall ${n}`, x: 0, y: 200 * n, width: 300, height: 400 });
+      await waitState(page, () => document.querySelectorAll(".fp_card").length >= 6 && document.querySelector('.fp_card[data-state="ready"]'), "frames and a ready image");
+      await sleep(800);
+      let st = await state(page);
+      await page.screenshot({ path: join(out, "preview-p1-compact.png") });
+      check("P1-preview-first", st.mode === "preview" && st.previewShown && st.canvasVisible === "hidden" && st.cards >= 6 && st.ready >= 1, JSON.stringify(st));
+      check("P1-dirty-quiet", !(await logOf(page, id)).some((m) => m.type === "dirty" && m.dirty === false), "opening the preview sends no dirty=false");
+
+      // The page scrolls natively (no script handles it); two fingers zoom it.
+      // A wheel scroll: headless Chrome does not turn synthesized touch drags into scrolls inside a frame.
+      await page.mouse.move(200, 600);
+      await page.mouse.wheel(0, 500);
+      await sleep(400);
+      const scrolled = await state(page);
+      check("P1-scroll", scrolled.scrollTop > 100 && scrolled.scrollHeight > 844, `scrollTop ${scrolled.scrollTop} of ${scrolled.scrollHeight}`);
+      await touch("touchStart", [[150, 400], [250, 400]]);
+      for (let i = 1; i <= 10; i++) { await sleep(16); await touch("touchMove", [[150 - i * 10, 400], [250 + i * 10, 400]]); }
+      await touch("touchEnd", []);
+      await sleep(1500);
+      const zoomed = await state(page);
+      await page.screenshot({ path: join(out, "preview-p1-zoomed.png") });
+      check("P1-pinch-zoom", zoomed.contentWidth > zoomed.viewWidth * 1.8, `content ${zoomed.contentWidth}px in a ${zoomed.viewWidth}px view`);
+
+      // Edit opens the editor, an edit is made there, and back shows it.
+      await inFrame(page).click("#fp_edit");
+      await waitState(page, () => document.querySelector("#fp").dataset.mode === "edit", "edit mode");
+      await sleep(1500);
+      st = await state(page);
+      await page.screenshot({ path: join(out, "preview-p2-edit.png") });
+      check("P2-edit", st.mode === "edit" && !st.previewShown && st.backShown && st.canvasVisible === "visible", JSON.stringify(st));
+      await call(page, id, "create_node", { type: "frame", name: "MadeInEditor", x: 0, y: 1500, width: 80, height: 80 });
+      await waitLog(page, id, "dirty");
+      await inFrame(page).click("#fp_back");
+      await waitState(page, () => Array.from(document.querySelectorAll("#fp_nav button")).some((b) => b.textContent === "MadeInEditor"), "the edit in the preview");
+      await sleep(800);
+      st = await state(page);
+      await page.screenshot({ path: join(out, "preview-p2-back.png") });
+      const dirties = (await logOf(page, id)).filter((m) => m.type === "dirty").map((m) => m.dirty);
+      check("P2-back-shows-edit", st.mode === "preview" && st.names.includes("MadeInEditor"), JSON.stringify(st.names));
+      check("P2-dirty-kept", sameJson(dirties, [true]), `dirty messages ${JSON.stringify(dirties)}`);
+      await send(page, id, { type: "requestSave" });
+      await waitLog(page, id, "save");
+      const saved = (await logOf(page, id)).find((m) => m.type === "save");
+      check("P2-save", saved.bytes.length > 0, `${saved.bytes.length} bytes`);
+      await send(page, id, { type: "saved" });
+      await waitLog(page, id, "dirty", 2);
+      check("P2-saved-clears", sameJson((await logOf(page, id)).filter((m) => m.type === "dirty").map((m) => m.dirty), [true, false]), "saved clears dirty");
+
+      // Band's theme colours the preview chrome.
+      await send(page, id, { type: "theme", mode: "dark", tokens: { background: "#101820", foreground: "#eeeeee" } });
+      await sleep(500);
+      st = await state(page);
+      check("P5-theme", st.background === "rgb(16, 24, 32)", `background ${st.background}`);
+
+      // reload with new bytes redraws the preview (the tab has no unsaved edits now).
+      await page.evaluate(([i, b]) => window.send(i, { type: "reload" }, b), [id, Array.from(reloaded)]);
+      await waitState(page, () => Array.from(document.querySelectorAll("#fp_nav button")).some((b) => b.textContent === "AfterReload"), "the reloaded file");
+      st = await state(page);
+      await page.screenshot({ path: join(out, "preview-p4-reload.png") });
+      check("P4-reload", st.names.includes("AfterReload") && !st.names.includes("MadeInEditor"), JSON.stringify(st.names));
+
+      // A regular frame opens the editor and shows no preview.
+      await page.setViewportSize({ width: 1280, height: 800 });
+      const wide = await openAs(page, "design.figcraft", figcraft, "regular");
+      await sizeFrame(page, 1280, 800);
+      await sleep(2500);
+      st = await state(page);
+      await page.screenshot({ path: join(out, "preview-p3-regular.png") });
+      check("P3-regular-editor", st.mode === "off" && !st.previewShown && !st.backShown && st.canvasVisible === "visible", JSON.stringify(st));
+      const bare = await openAs(page, "design.figcraft", figcraft, undefined);
+      await sizeFrame(page, 1280, 800);
+      await sleep(2000);
+      st = await state(page);
+      check("P3-no-layout-editor", st.mode === "off" && !st.previewShown && st.canvasVisible === "visible", JSON.stringify(st));
+      void wide; void bare;
+    } finally {
+      await ctx.close();
+    }
+  }
+
   // Compact layout, touch and selection (shared scenarios in scripts/verify-compact.mjs).
   {
     await compactScenarios(
@@ -330,6 +473,12 @@ try {
         s1Size: [900, 700],
         minChange: 0.02,
         file: { name: "seed.figcraft", bytes: figcraft },
+        // The compact layout opens the preview first: press Edit to reach the editor the scenarios drive.
+        prepare: async ({ page }) => {
+          const f = page.frames().find((fr) => fr !== page.mainFrame() && fr.url().startsWith(buildBase));
+          await f.click("#fp_edit");
+          await sleep(1500);
+        },
         tap: [25, 340],
         // A tap on empty canvas does not deselect in FigCraft, so the test runs its Select none command.
         clear: async (page, id) => call(page, id, "run_command", { command: "select.none", params: {} }),
