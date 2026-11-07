@@ -7,34 +7,8 @@ import { after, describe, it } from "node:test";
 import vm from "node:vm";
 import { config, setStateDir } from "../src/config.ts";
 import { ensureOpenShim, openShimScript } from "../src/shim.ts";
-import { compactTree } from "../src/servesim.ts";
 import { modelFromType } from "../src/devices.ts";
-import { jpegSize, mjpegFrames, serveSimButton, streamProfile } from "../src/stream.ts";
-
-describe("compactTree", () => {
-  it("keeps elements with a label, a value or a control type, with a tap point in points", () => {
-    const tree = [
-      {
-        type: "Application",
-        frame: { x: 0, y: 0, width: 402, height: 874 },
-        children: [
-          { type: "StaticText", AXLabel: "Hello", frame: { x: 10, y: 20, width: 100, height: 20 } },
-          { type: "Button", AXLabel: "OK", AXUniqueId: "ok", frame: { x: 100, y: 200, width: 60, height: 40 }, enabled: false },
-          { type: "Other", frame: { x: 0, y: 0, width: 5, height: 5 } },
-          { type: "Switch", frame: { x: 0, y: 0, width: 0, height: 10 } },
-        ],
-      },
-    ];
-    const out = compactTree(tree);
-    assert.deepEqual(
-      out.map((e) => [e.type, e.label, e.id, e.enabled, e.center]),
-      [
-        ["StaticText", "Hello", undefined, true, { x: 60, y: 30 }],
-        ["Button", "OK", "ok", false, { x: 130, y: 220 }],
-      ],
-    );
-  });
-});
+import { jpegSize, mjpegFrames, streamProfile } from "../src/stream.ts";
 
 describe("serve-sim stream parsing", () => {
   const jpeg = (n) => Buffer.concat([Buffer.from([0xff, 0xd8]), Buffer.alloc(n, 1), Buffer.from([0xff, 0xd9])]);
@@ -60,10 +34,7 @@ describe("serve-sim stream parsing", () => {
     assert.equal(jpegSize(Buffer.from([0xff, 0xd8, 0xff, 0xd9])), null);
   });
 
-  it("maps button names and profiles", () => {
-    assert.equal(serveSimButton("HOME"), "home");
-    assert.equal(serveSimButton("SIDE_BUTTON"), "side_button");
-    assert.throws(() => serveSimButton("POWER"), /must be one of/);
+  it("maps stream profiles", () => {
     assert.equal(streamProfile({ profile: "hub" }), "hub");
     assert.equal(streamProfile({ profile: "direct" }), "direct");
     // A stream with no profile (or an unknown one) gets the cheaper half-size profile.

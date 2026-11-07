@@ -43,11 +43,16 @@ export class Fleet {
     return { ios, android };
   }
 
-  /** The device with this id, or the one device with this name (case does not matter). */
+  /**
+   * The device with this id, an iOS UDID or an adb serial, or the one device with this name (case
+   * does not matter). An agent has the UDID from `simctl` or the serial from `adb devices`.
+   */
   async find(ref: string, devices?: SimDevice[]): Promise<SimDevice> {
     const all = devices ?? (await this.list());
     const byId = all.find((d) => d.id === ref);
     if (byId) return byId;
+    const byRaw = all.find((d) => d.id === `ios:${ref}` || d.serial === ref);
+    if (byRaw) return byRaw;
     const byName = all.filter((d) => d.name.toLowerCase() === ref.toLowerCase());
     if (byName.length === 1) return byName[0] as SimDevice;
     if (byName.length > 1) {

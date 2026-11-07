@@ -18,14 +18,6 @@ const BUTTONS: Record<string, string> = {
   SIDE_BUTTON: "side_button",
   SIRI: "siri",
 };
-export const BUTTON_NAMES = Object.keys(BUTTONS);
-
-export function serveSimButton(name: string): string {
-  const mapped = BUTTONS[name];
-  if (!mapped) throw new Error(`button must be one of ${BUTTON_NAMES.join(", ")}`);
-  return mapped;
-}
-
 /** The orientations the panel's Rotate button uses. */
 export const ORIENTATIONS = ["portrait", "landscape_left"];
 

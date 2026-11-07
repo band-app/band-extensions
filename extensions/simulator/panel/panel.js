@@ -8,6 +8,11 @@
 // is focused, which is how agent tools find "the device on screen". The layout and each pane's
 // device are saved through the service ("saveLayout") and restored from it ("layout"). Input is
 // always on: Band has no Take control step for panels. Pure helpers are in shell.js and canvas.js.
+//
+// While visible the page polls the service's "events" call every 2 seconds. The poll carries the
+// focused pane and the shown devices. The answer brings "show" events (an agent put a device in a
+// pane: that pane switches without a reload) and "offer" events (a device started that no pane
+// shows: a bar asks "<name> started, show it?" with Show and Dismiss, and never switches alone).
 (() => {
   "use strict";
 
@@ -40,6 +45,13 @@
   const byStream = new Map();
   /** The frame toggle per device for this session, used when storage is blocked. */
   const framedInSession = new Map();
+  const POLL_MS = 2000;
+  let pollTimer = null;
+  let polling = false;
+  let lastSeq;
+  /** Offered devices by id, and the ones the person dismissed (until the device turns off). */
+  const offers = new Map();
+  const dismissed = new Set();
 
   function call(method, params) {
     return new Promise((resolve, reject) => {
@@ -370,6 +382,7 @@
       scheduleSave();
       if (device) this.openStream();
       else this.setPhase("empty");
+      renderOffers();
     }
 
     // ---- input ----------------------------------------------------------------------------
@@ -811,7 +824,106 @@
     focusPane(focusedId, false);
   }
 
+  // ---- events from the service ------------------------------------------------------------
+
+  function shownIds() {
+    return Canvas.panes(tree).flatMap((n) => (n.device ? [n.device.id] : []));
+  }
+
+  function renderOffers() {
+    const bar = $("offers");
+    bar.textContent = "";
+    const shown = new Set(shownIds());
+    let count = 0;
+    for (const [id, d] of offers) {
+      if (shown.has(id) || dismissed.has(id)) continue;
+      count++;
+      const row = document.createElement("div");
+      row.className = "offer";
+      row.dataset.offer = id;
+      row.setAttribute("role", "status");
+      const text = document.createElement("span");
+      text.className = "offer-text";
+      text.textContent = `${d.name} started, show it?`;
+      const show = document.createElement("button");
+      show.type = "button";
+      show.className = "offer-show";
+      show.textContent = "Show";
+      show.addEventListener("click", async () => {
+        show.disabled = true;
+        try {
+          await call("show", { device: id });
+          offers.delete(id);
+          await pollEvents();
+        } catch {
+          show.disabled = false;
+        }
+        renderOffers();
+      });
+      const dismiss = document.createElement("button");
+      dismiss.type = "button";
+      dismiss.className = "offer-dismiss";
+      dismiss.textContent = "Dismiss";
+      dismiss.addEventListener("click", () => {
+        dismissed.add(id);
+        renderOffers();
+      });
+      row.append(text, show, dismiss);
+      bar.append(row);
+    }
+    bar.hidden = count === 0;
+  }
+
+  /** An agent put a device in a pane: switch that pane (else the focused one) without touching the others. */
+  function applyShow(ev) {
+    const device = ev.device;
+    if (!device || shownIds().includes(device.id)) return;
+    const target = panes.get(ev.paneId) ?? panes.get(focusedId) ?? [...panes.values()][0];
+    if (target) target.setDevice({ id: device.id, platform: device.platform, name: device.name });
+  }
+
+  function applyEvent(ev) {
+    if (ev.type === "show") {
+      applyShow(ev);
+      offers.delete(ev.device?.id);
+    } else if (ev.type === "offer") {
+      if (!shownIds().includes(ev.device.id)) {
+        dismissed.delete(ev.device.id);
+        offers.set(ev.device.id, ev.device);
+      }
+    } else if (ev.type === "withdraw") {
+      offers.delete(ev.id);
+      dismissed.delete(ev.id);
+    }
+  }
+
+  async function pollEvents() {
+    if (polling || !port) return;
+    polling = true;
+    try {
+      const res = await call("events", { since: lastSeq, focus: focusedId, shown: shownIds() });
+      for (const ev of res.events ?? []) applyEvent(ev);
+      lastSeq = res.seq;
+      renderOffers();
+    } catch {
+      // The next poll tries again.
+    } finally {
+      polling = false;
+    }
+  }
+
+  function startPolling() {
+    clearInterval(pollTimer);
+    pollTimer = setInterval(() => {
+      if (visible) void pollEvents();
+    }, POLL_MS);
+  }
+
   async function start() {
+    // The first poll tells the service a tab is open; it comes before the layout is read, so a
+    // `show` between the two is in the layout or in the events.
+    await pollEvents();
+    startPolling();
     let layout = null;
     try {
       layout = (await call("layout")).layout;

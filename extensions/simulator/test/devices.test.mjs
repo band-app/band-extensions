@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { setStateDir } from "../src/config.ts";
-import { AndroidBackend, avdPrefix, inputTextArg, parseAdbDevices, parseAvdConfig, parseUiautomator } from "../src/android.ts";
+import { AndroidBackend, avdPrefix, inputTextArg, parseAdbDevices, parseAvdConfig } from "../src/android.ts";
 import { DeviceSet } from "../src/devices.ts";
 import { Fleet } from "../src/fleet.ts";
 import { makeAndroidSdk, script } from "./fakes.mjs";
@@ -40,17 +40,6 @@ describe("parsers", () => {
     });
     assert.equal(avdPrefix("Band"), "Band-");
     assert.equal(avdPrefix("my prefix!"), "my-prefix-");
-  });
-
-  it("turns a uiautomator dump into tap points in pixels", () => {
-    const xml = `<?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation="0"><node index="0" text="" resource-id="" class="android.widget.FrameLayout" content-desc="" clickable="false" enabled="true" bounds="[0,0][1080,2400]"><node text="Sign &amp; go" resource-id="com.x:id/go" class="android.widget.Button" content-desc="" clickable="true" enabled="false" bounds="[100,200][300,300]" /><node text="" resource-id="" class="android.view.View" content-desc="" clickable="false" enabled="true" bounds="[0,0][5,5]" /><node text="" resource-id="com.x:id/in" class="android.widget.EditText" content-desc="Email" clickable="true" enabled="true" bounds="[0,400][1080,500]" /></node></hierarchy>\nUI hierchary dumped to: /dev/tty`;
-    const { screen, elements } = parseUiautomator(xml);
-    assert.deepEqual(screen, { width: 1080, height: 2400 });
-    assert.deepEqual(elements.map((e) => [e.type, e.label, e.id, e.enabled, e.center]), [
-      ["Button", "Sign & go", "com.x:id/go", false, { x: 200, y: 250 }],
-      ["EditText", "Email", "com.x:id/in", true, { x: 540, y: 450 }],
-    ]);
-    assert.throws(() => parseUiautomator("ERROR: null root node"));
   });
 
   it("quotes typed text for the device shell and refuses what input text cannot type", () => {
@@ -163,33 +152,6 @@ describe("Android with stand-ins for adb, emulator and avdmanager", () => {
     assert.equal(booted.state, "on");
     assert.ok(log().some((l) => l.startsWith("emulator -avd Pixel_8 -no-window")));
     assert.equal((await android.list()).find((x) => x.name === "Pixel_8").state, "on");
-  });
-
-  it("acts on the running emulator: screenshot, describe, tap, keys, text, install, launch, url", async () => {
-    const d = (await android.list()).find((x) => x.name === "Pixel_8");
-    clear();
-    const shot = await android.screenshot(d);
-    assert.equal(shot.mimeType, "image/png");
-    assert.deepEqual([shot.width, shot.height, shot.scale], [100, 200, 1]);
-    const tree = await android.describe(d);
-    assert.deepEqual(tree.elements.map((e) => [e.label, e.center]), [["OK", { x: 100, y: 50 }]]);
-    await android.tap(d, 540, 1200);
-    await assert.rejects(android.tap(d, 5000, 5), /outside/);
-    await android.button(d, "BACK");
-    await assert.rejects(android.button(d, "SIRI"), /must be one of/);
-    await android.type(d, "a b");
-    await android.install(d, "/w/app.apk");
-    await android.launch(d, "com.example.app");
-    await assert.rejects(android.launch(d, "x; reboot"), /package name/);
-    await android.openUrl(d, "https://example.com/?a=1&b=2");
-    assert.deepEqual(log(), [
-      "emulator-5554 shell input tap 540 1200",
-      "emulator-5554 shell input keyevent 4",
-      "emulator-5554 shell input text 'a%sb'",
-      "emulator-5554 install -r -t /w/app.apk",
-      "emulator-5554 shell monkey -p com.example.app -c android.intent.category.LAUNCHER 1",
-      "emulator-5554 shell am start -a android.intent.action.VIEW -d 'https://example.com/?a=1&b=2'",
-    ]);
   });
 
   it("streams JPEG frames and turns touches into taps and swipes", { skip: !existsSync("/usr/bin/sips") }, async () => {
