@@ -1,6 +1,6 @@
 # band-extensions
 
-Official extensions for [Band](https://github.com/band-app/band). Five are editors for the ArtCraft apps: each is a web build of one app that Band frames in a sandboxed iframe, so a person edits a file in a Band tab and an agent edits the same open document through the app's MCP tools. One, the simulator, is a worker service with a panel and agent tools.
+Official extensions for [Band](https://github.com/band-app/band). Five are editors for the ArtCraft apps: each is a web build of one app that Band frames in a sandboxed iframe, so a person edits a file in a Band tab and an agent edits the same open document through the app's MCP tools. Two, the simulator and the desktop, are worker services with a panel and agent tools.
 
 | Extension | Opens | App |
 |---|---|---|
@@ -9,6 +9,7 @@ Official extensions for [Band](https://github.com/band-app/band). Five are edito
 | [deckcraft](extensions/deckcraft/README.md) | `*.pptx` | [DeckCraft](https://github.com/storytold/deckcraft) |
 | [figcraft](extensions/figcraft/README.md) | `*.figcraft`, `*.fig` | [FigCraft](https://github.com/storytold/figcraft) |
 | [vectorcraft](extensions/vectorcraft/README.md) | `*.svg`, `*.svgz`, `*.vectorcraft` | [VectorCraft](https://github.com/storytold/vectorcraft) |
+| [desktop](extensions/desktop/README.md) | a Desktop panel and six `desktop_*` agent tools | a virtual desktop per worktree on a Linux worker (Xvfb, x11vnc, noVNC) |
 | [simulator](extensions/simulator/README.md) | a Simulator panel and nine `simulator_*` agent tools | iOS Simulator on a Mac worker, through [serve-sim](https://github.com/EvanBacon/serve-sim) |
 
 ## Install from Band

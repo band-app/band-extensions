@@ -1,0 +1,91 @@
+{
+  "id": "desktop",
+  "name": "Desktop",
+  "version": "0.1.0",
+  "extensionApi": 1,
+  "contributes": {
+    "workerServices": [
+      {
+        "id": "main",
+        "entry": "service.mjs",
+        "requires": ["os=linux", "Xvfb", "x11vnc"],
+        "capability": "desktop",
+        "worktreeEnv": ["DISPLAY"]
+      }
+    ],
+    "panels": [
+      {
+        "id": "screen",
+        "label": "Desktop",
+        "icon": "monitor",
+        "entry": "panel.html",
+        "capability": "desktop",
+        "defaultControl": true,
+        "binaryInput": true
+      }
+    ],
+    "tools": [
+      {
+        "name": "status",
+        "description": "Show this worktree's virtual desktop: its DISPLAY value, its size in pixels, and whether anyone is watching. The desktop starts on the first call. Programs you start from this worktree's shell or tools already draw on it, because their DISPLAY points at it.",
+        "service": "main",
+        "method": "status"
+      },
+      {
+        "name": "screenshot",
+        "description": "Take a screenshot of this worktree's virtual desktop. Answers with the PNG image and a line with its size. Coordinates for desktop_click are pixels of the screen (the screenshot's size times the scale it reports).",
+        "service": "main",
+        "method": "screenshot"
+      },
+      {
+        "name": "click",
+        "description": "Click on this worktree's virtual desktop at pixel coordinates of the screen.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "x": { "type": "number", "description": "Horizontal pixel, 0 at the left edge" },
+            "y": { "type": "number", "description": "Vertical pixel, 0 at the top edge" },
+            "button": { "type": "string", "enum": ["left", "middle", "right"], "default": "left" },
+            "double": { "type": "boolean", "description": "Double click", "default": false }
+          },
+          "required": ["x", "y"]
+        },
+        "service": "main",
+        "method": "click"
+      },
+      {
+        "name": "type",
+        "description": "Type text into the focused window of this worktree's virtual desktop. A newline presses Enter.",
+        "inputSchema": {
+          "type": "object",
+          "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 10000 } },
+          "required": ["text"]
+        },
+        "service": "main",
+        "method": "type"
+      },
+      {
+        "name": "key",
+        "description": "Press a key or a combination on this worktree's virtual desktop, for example Enter, Tab, Escape, ctrl+l, alt+Tab, ctrl+shift+t or F5.",
+        "inputSchema": {
+          "type": "object",
+          "properties": { "keys": { "type": "string", "minLength": 1, "maxLength": 100 } },
+          "required": ["keys"]
+        },
+        "service": "main",
+        "method": "key"
+      },
+      {
+        "name": "open_url",
+        "description": "Open a URL in Chromium on this worktree's virtual desktop. Only http, https, file, data and about:blank URLs are opened. Use it to see a web app you built, in a real browser window that a person can also watch and use in the Desktop tab.",
+        "inputSchema": {
+          "type": "object",
+          "properties": { "url": { "type": "string", "minLength": 1 } },
+          "required": ["url"]
+        },
+        "service": "main",
+        "method": "openUrl"
+      }
+    ]
+  }
+}

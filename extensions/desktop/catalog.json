@@ -1,0 +1,4 @@
+{
+  "description": "A virtual desktop for each worktree on a Linux worker. Agents' windows show up in a Desktop tab you control, and agents get tools to look at and drive their own display.",
+  "minBand": "0.64.0"
+}

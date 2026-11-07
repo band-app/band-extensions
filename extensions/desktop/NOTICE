@@ -1,0 +1,14 @@
+Desktop for Band
+Copyright (c) 2026 Band and the band-extensions contributors.
+Licensed under the MIT License or the Apache License, Version 2.0, at your option
+(LICENSE-MIT, LICENSE-APACHE).
+
+Third-party material
+
+This extension is a port of the remote desktop viewer that Band used to bundle (band-app/band,
+apps/web DesktopViewer, MIT License, Copyright (c) 2026 Band) and ships a copy of its extension
+worker SDK (packages/extension-worker-sdk, MIT License, Copyright (c) 2026 Band) as src/sdk/.
+
+The panel bundles noVNC 1.7.0, Mozilla Public License 2.0 (core files) with parts under the MIT,
+BSD and other permissive licenses, Copyright (c) the noVNC authors. https://github.com/novnc/noVNC
+The noVNC license texts are in panel.js's source package, node_modules/@novnc/novnc/LICENSE.txt.
