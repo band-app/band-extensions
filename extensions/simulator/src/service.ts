@@ -5,7 +5,7 @@ import { AndroidBackend } from "./android.ts";
 import { Fleet, UnknownDevice } from "./fleet.ts";
 import { IosBackend } from "./ios.ts";
 import { deviceIds } from "./layout.ts";
-import { defineWorkerService, type ServiceStream } from "./sdk/index.mjs";
+import { defineWorkerService, type ServiceStream, type WorkerServiceDefinition } from "./sdk/index.mjs";
 import { LayoutStore } from "./store.ts";
 import type { ScreenStream } from "./stream.ts";
 import type { Platform, SimDevice } from "./types.ts";
@@ -39,7 +39,8 @@ function num(params: unknown, key: string): number {
  * own. Agent tools act on the device they name, or else on the device in the pane the person
  * focused last.
  */
-const fleet = new Fleet({ ios: new IosBackend(), android: new AndroidBackend() });
+const ios = new IosBackend();
+const fleet = new Fleet({ ios, android: new AndroidBackend() });
 const store = new LayoutStore();
 
 /** One open screen stream: a pane of a worktree's tab. */
@@ -132,9 +133,63 @@ async function insideWorktree(path: string, worktreePath: string, ext: string): 
   return real;
 }
 
-defineWorkerService({
+const SWEEP_EVERY_MS = 24 * 3600_000;
+let sweepTimer: NodeJS.Timeout | undefined;
+
+/**
+ * Deletes the iOS devices that earlier versions made for worktrees whose folder is gone. A device
+ * a saved layout shows, or a pane watches, is never deleted. A failure only means the next sweep tries again.
+ */
+function sweep(): Promise<void> {
+  return fleet
+    .exclusive(async () =>
+      ios.set.sweepRemoved({
+        protectedIds: await store.savedDeviceIds(),
+        isWatched: fleet.isWatched,
+        beforeDelete: (d) => ios.release(d),
+      }),
+    )
+    .then(
+      (names) => {
+        if (names.length > 0) console.error(`simulator: deleted ${names.length} device(s) of removed worktrees`);
+      },
+      (err: Error) => console.error(`simulator sweep: ${err.message}`),
+    );
+}
+
+/** Every call and stream notes the worktree's folder first, so a later removal finds its legacy device even after a restart. */
+function withFolders(def: WorkerServiceDefinition): WorkerServiceDefinition {
+  const remember = ({ worktreeKey, worktreePath }: { worktreeKey: string; worktreePath: string }) => {
+    void ios.set.rememberFolder(worktreeKey, worktreePath);
+  };
+  const calls = Object.fromEntries(
+    Object.entries(def.calls ?? {}).map(([name, fn]) => [
+      name,
+      (params: unknown, scope: Parameters<typeof fn>[1]) => {
+        remember(scope);
+        return fn(params, scope);
+      },
+    ]),
+  );
+  const streams = Object.fromEntries(
+    Object.entries(def.streams ?? {}).map(([name, fn]) => [
+      name,
+      (params: Parameters<typeof fn>[0], scope: Parameters<typeof fn>[1], stream: Parameters<typeof fn>[2]) => {
+        remember(scope);
+        return fn(params, scope, stream);
+      },
+    ]),
+  );
+  return { ...def, calls, streams };
+}
+
+defineWorkerService(withFolders({
   onInit({ stateDir }) {
     setStateDir(stateDir);
+    // Behind the start, so a slow simctl never delays the first call.
+    void sweep();
+    sweepTimer = setInterval(() => void sweep(), SWEEP_EVERY_MS);
+    sweepTimer.unref();
   },
 
   calls: {
@@ -320,6 +375,7 @@ defineWorkerService({
   async onRelease(worktreeKey, reason) {
     if (reason === "removed") {
       await store.forget(worktreeKey);
+      await removeLegacy(worktreeKey);
       return;
     }
     // The worktree lets go of its screens: turn off the devices Band booted that nobody else watches.
@@ -330,8 +386,27 @@ defineWorkerService({
     );
   },
 
+  /**
+   * A worktree was removed that this run of the service never served. The folder index in the
+   * state dir says which worktree keys lived there.
+   */
+  async onReleasePath(worktreePath) {
+    for (const key of await ios.set.keysAt(worktreePath)) {
+      await store.forget(key);
+      await removeLegacy(key);
+    }
+  },
+
   async onStop() {
+    if (sweepTimer) clearInterval(sweepTimer);
     await fleet.exclusive(() => fleet.shutdownOurs());
     await Promise.all(Object.values(fleet.backends).map((b) => b.stopAll()));
   },
-});
+}));
+
+/** Deletes the device an earlier version made for a removed worktree, unless a saved layout shows it. */
+async function removeLegacy(worktreeKey: string): Promise<void> {
+  await fleet.exclusive(async () =>
+    ios.set.deleteWorktree(worktreeKey, await store.savedDeviceIds(), (d) => ios.release(d)),
+  );
+}

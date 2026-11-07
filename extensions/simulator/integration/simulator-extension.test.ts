@@ -8,7 +8,7 @@
 // prefix are created, booted or deleted, and the test deletes every one of them at the end.
 
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -53,7 +53,7 @@ const SUPERSEDED = true;
 const CAN_RUN = !SUPERSEDED && hasSimctl && TARBALL !== "" && existsSync(TARBALL);
 
 /** The prefix of every device this run creates. A person's devices never start with it. */
-const PREFIX = `Band simext ${randomBytes(4).toString("hex")}`;
+const PREFIX = `band-test-${Math.floor(Date.now() / 1000).toString(36)}-${process.pid}`;
 const SEP = "–";
 
 /** Whether Simulator.app was open and visible before this run, so the window check can stand aside. */

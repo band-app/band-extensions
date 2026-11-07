@@ -19,6 +19,8 @@ The picker also creates devices. "New iOS simulator..." takes a model and an iOS
 
 At most 2 iOS simulators and 2 Android emulators are on at once (`maxBooted`, `maxBootedAndroid`). Turning on a device over the limit shuts down the least recently used one first, preferring a device no pane shows. Only a device Band created or turned on itself is ever shut down this way. A device the person had already started, and any phone, stays. Stopping the service shuts down the devices Band started.
 
+Earlier versions made one device per worktree, named `<prefix> – <worktree id>`. Once a day and when a worktree is removed, the service deletes such a device when its worktree's folder is gone. It never deletes a device that a saved layout shows, one a pane is watching, the person's own devices, or one created in the picker.
+
 ## The canvas
 
 The tab is a tree of splits. Each pane has a toolbar with the picker, a frame toggle, Rotate, Home (and Back on Android), Power, split side by side, split top and bottom, and Close. Panes are resized by dragging a divider or with the arrow keys on it. Pressing a pane focuses it, and keyboard input goes to the focused pane.
@@ -86,6 +88,6 @@ cd ../.. && scripts/package.sh simulator     # dist/simulator-<version>.tar.gz a
 BAND_SRC=/path/to/band extensions/simulator/integration/run.sh   # needs Xcode, about 6 GB of disk
 ```
 
-`integration/run.sh` needs a checkout of the simulator-as-extension branch of Band (0.62.0 or later) that is installed and built (`pnpm install`, `pnpm build:web`). It copies a vitest file and a Playwright spec into it and runs them against a real hub and worker with a temp HOME and no `BAND_*` variables. The tests give the worker a device name prefix of their own and delete every device with it.
+`integration/run.sh` and its two tests are skipped: they test one auto-created device per worktree, which the canvas replaced, and need a rewrite for the picker and layout calls. `verify.mjs` and the unit tests cover the canvas, the Android backend and the tools meanwhile. When rewritten, `integration/run.sh` needs a checkout of the simulator-as-extension branch of Band (0.62.0 or later) that is installed and built (`pnpm install`, `pnpm build:web`). It copies a vitest file and a Playwright spec into it and runs them against a real hub and worker with a temp HOME and no `BAND_*` variables. The tests give the worker a device name prefix of their own and delete every device with it.
 
 serve-sim uses private Apple APIs (`SimulatorKit`, `CoreSimulator`, `IndigoHID`). A new Xcode can break capture or input until serve-sim is updated. Bump the pin by hand after the integration test passes.

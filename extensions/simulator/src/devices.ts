@@ -1,4 +1,6 @@
-import { config } from "./config.ts";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { config, getStateDir } from "./config.ts";
 import { run } from "./tools.ts";
 import type { SimDevice } from "./types.ts";
 
@@ -67,6 +69,9 @@ export const udidOf = (device: Pick<SimDevice, "id">) => device.id.slice("ios:".
  * under the booted limit is the fleet's job, not this class's.
  */
 export class DeviceSet {
+  /** The folder each worktree was last served from, by worktree key. Loaded from the state dir on first use. */
+  private folders: Map<string, string> | null = null;
+
   private simctl(args: string[], timeoutMs?: number) {
     return run("xcrun", ["simctl", ...args], { timeoutMs });
   }
@@ -159,5 +164,107 @@ export class DeviceSet {
 
   async delete(device: SimDevice): Promise<void> {
     await this.simctl(["delete", udidOf(device)]);
+  }
+
+  private async loadFolders(): Promise<Map<string, string>> {
+    if (this.folders) return this.folders;
+    const map = new Map<string, string>();
+    try {
+      const parsed = JSON.parse(await readFile(join(getStateDir(), "worktrees.json"), "utf8")) as unknown;
+      if (typeof parsed === "object" && parsed !== null) {
+        for (const [k, v] of Object.entries(parsed)) if (typeof v === "string") map.set(k, v);
+      }
+    } catch {
+      // No file yet, or no state dir (tests): nothing is known.
+    }
+    this.folders = map;
+    return map;
+  }
+
+  private async saveFolders(): Promise<void> {
+    try {
+      const dir = getStateDir();
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, "worktrees.json"), JSON.stringify(Object.fromEntries(this.folders ?? [])));
+    } catch {
+      // The sweep then skips worktrees it cannot place.
+    }
+  }
+
+  /**
+   * Remembers where a worktree lives. The worker's list of served worktrees is in memory and
+   * gone after a restart, so this index in the state dir is how a removed worktree is found later.
+   */
+  async rememberFolder(worktreeKey: string, folder: string): Promise<void> {
+    const map = await this.loadFolders();
+    if (map.get(worktreeKey) === folder) return;
+    map.set(worktreeKey, folder);
+    await this.saveFolders();
+  }
+
+  /** The keys of the worktrees last served from `folder`. */
+  async keysAt(folder: string): Promise<string[]> {
+    return [...(await this.loadFolders())].filter(([, f]) => f === folder).map(([k]) => k);
+  }
+
+  /**
+   * Deletes the device earlier versions made for a worktree, named "<prefix> \u2013 <key>", and
+   * forgets the worktree's folder. A device in `protectedIds` (one a saved layout shows) stays.
+   */
+  async deleteWorktree(
+    worktreeKey: string,
+    protectedIds: ReadonlySet<string> = new Set(),
+    beforeDelete: (d: SimDevice) => Promise<void> | void = () => {},
+  ): Promise<string | null> {
+    const folders = await this.loadFolders();
+    if (folders.delete(worktreeKey)) await this.saveFolders();
+    const name = `${namePrefix()}${SEP}${worktreeKey}`;
+    const device = (await this.list()).find((d) => d.name === name);
+    if (!device || protectedIds.has(device.id)) return null;
+    await beforeDelete(device);
+    await this.shutdown(device);
+    await this.delete(device);
+    return device.name;
+  }
+
+  /**
+   * Deletes the device of every worktree whose folder is gone. Only a device named
+   * "<prefix> \u2013 <worktree key>" whose key has a known folder that no longer exists is deleted.
+   * A device without the prefix, one of a worktree whose folder exists, one with no known folder,
+   * one a saved layout shows, and a device someone is watching all stay. The devices people create
+   * in the picker are named "<prefix> \u2013 <model>", whose "key" has no folder, so they stay too.
+   */
+  async sweepRemoved(
+    options: {
+      exists?: (folder: string) => Promise<boolean>;
+      protectedIds?: ReadonlySet<string>;
+      isWatched?: (id: string) => boolean;
+      beforeDelete?: (d: SimDevice) => Promise<void> | void;
+    } = {},
+  ): Promise<string[]> {
+    const { exists = folderExists, protectedIds = new Set<string>(), isWatched = () => false, beforeDelete } = options;
+    const folders = await this.loadFolders();
+    const owned = `${namePrefix()}${SEP}`;
+    const deleted: string[] = [];
+    for (const d of await this.list()) {
+      if (!d.name.startsWith(owned)) continue;
+      const key = d.name.slice(owned.length);
+      const folder = folders.get(key);
+      if (folder === undefined || (await exists(folder))) continue;
+      if (protectedIds.has(d.id) || (d.state === "on" && isWatched(d.id))) continue;
+      const name = await this.deleteWorktree(key, protectedIds, beforeDelete);
+      if (name) deleted.push(name);
+    }
+    return deleted;
+  }
+}
+
+/** Whether a folder exists. Only a missing folder counts as gone; any other error keeps the device. */
+async function folderExists(folder: string): Promise<boolean> {
+  try {
+    await stat(folder);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code !== "ENOENT";
   }
 }

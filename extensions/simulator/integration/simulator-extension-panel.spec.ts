@@ -8,7 +8,6 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -37,7 +36,7 @@ const TARBALL = process.env.SIM_EXT_TARBALL ?? "";
 const SHOTS = process.env.SIM_EXT_SHOTS ?? tmpdir();
 const TOKEN = "e2e-simulator-extension-token";
 const REPO = "simrepo";
-const PREFIX = `Band simext e2e ${randomBytes(4).toString("hex")}`;
+const PREFIX = `band-test-${Math.floor(Date.now() / 1000).toString(36)}-${process.pid}`;
 const SEP = "–";
 
 let server: ServerHandle;
