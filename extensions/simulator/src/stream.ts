@@ -151,7 +151,7 @@ class FrameScaler {
 }
 
 /** Holds the newest message, so a slow viewer skips frames instead of lagging further behind. */
-class Latest<T> {
+export class Latest<T> {
   private value: T | undefined;
   private waiter: (() => void) | null = null;
   private ended = false;
@@ -218,7 +218,7 @@ const unit = (v: unknown): number | null =>
 export function openScreenStream(
   helper: Helper,
   helpers: ServeSimHelpers,
-  info: { width: number; height: number; udid: string; name: string; model?: string },
+  info: { width: number; height: number; udid: string; name: string; model?: string; platform?: string },
   params: unknown = {},
 ): ScreenStream {
   const abort = new AbortController();

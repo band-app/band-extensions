@@ -47,7 +47,10 @@ const hasSimctl = (() => {
     return false;
   }
 })();
-const CAN_RUN = hasSimctl && TARBALL !== "" && existsSync(TARBALL);
+// Skipped: this suite tests one auto-created device per worktree, which the canvas replaced (devices are picked or
+// created in panes). It needs a rewrite against the new calls (devices, create, layout, saveLayout) before it runs again.
+const SUPERSEDED = true;
+const CAN_RUN = !SUPERSEDED && hasSimctl && TARBALL !== "" && existsSync(TARBALL);
 
 /** The prefix of every device this run creates. A person's devices never start with it. */
 const PREFIX = `Band simext ${randomBytes(4).toString("hex")}`;

@@ -1,17 +1,14 @@
-import { mkdir, readFile, realpath, rm } from "node:fs/promises";
-import { join, sep } from "node:path";
-import { DeviceSet, maxBooted } from "./devices.ts";
-import { getStateDir, setStateDir } from "./config.ts";
-import { defineWorkerService } from "./sdk/index.mjs";
-import { ServeSimHelpers } from "./servesim.ts";
-import {
-  jpegSize,
-  ORIENTATIONS,
-  openScreenStream,
-  type ScreenStream,
-  serveSimButton,
-} from "./stream.ts";
-import { run } from "./tools.ts";
+import { realpath } from "node:fs/promises";
+import { sep } from "node:path";
+import { setStateDir } from "./config.ts";
+import { AndroidBackend } from "./android.ts";
+import { Fleet, UnknownDevice } from "./fleet.ts";
+import { IosBackend } from "./ios.ts";
+import { deviceIds } from "./layout.ts";
+import { defineWorkerService, type ServiceStream } from "./sdk/index.mjs";
+import { LayoutStore } from "./store.ts";
+import type { ScreenStream } from "./stream.ts";
+import type { Platform, SimDevice } from "./types.ts";
 
 function obj(params: unknown): Record<string, unknown> {
   return typeof params === "object" && params !== null ? (params as Record<string, unknown>) : {};
@@ -23,29 +20,117 @@ function str(params: unknown, key: string): string {
   return v;
 }
 
+function optStr(params: unknown, key: string): string | undefined {
+  const v = obj(params)[key];
+  if (v === undefined || v === null || v === "") return undefined;
+  if (typeof v !== "string") throw new Error(`${key} must be a string`);
+  return v;
+}
+
 function num(params: unknown, key: string): number {
   const v = obj(params)[key];
   if (typeof v !== "number" || !Number.isFinite(v)) throw new Error(`${key} must be a number`);
   return v;
 }
 
-/** Width and height in pixels, from a PNG's IHDR chunk. */
-function pngSize(png: Buffer): { width: number; height: number } {
-  return { width: png.readUInt32BE(16), height: png.readUInt32BE(20) };
+/**
+ * The simulator as a worker service. The Simulator tab is a canvas of panes, each showing one
+ * iOS simulator or Android emulator the person picked or created. Band creates nothing on its
+ * own. Agent tools act on the device they name, or else on the device in the pane the person
+ * focused last.
+ */
+const fleet = new Fleet({ ios: new IosBackend(), android: new AndroidBackend() });
+const store = new LayoutStore();
+
+/** One open screen stream: a pane of a worktree's tab. */
+interface View {
+  worktreeKey: string;
+  deviceId: string;
+  focusAt: number;
+  stream: ServiceStream;
+  live: ScreenStream | null;
+}
+const views = new Set<View>();
+
+fleet.isWatched = (id) => [...views].some((v) => v.deviceId === id);
+fleet.onShutdown = (device) => {
+  // Tell the viewers the device is off, so the pane shows Off instead of reconnecting and booting it again.
+  for (const v of [...views]) {
+    if (v.deviceId !== device.id) continue;
+    v.stream.send(JSON.stringify({ type: "off" }));
+    v.live?.close();
+    v.live = null;
+    views.delete(v);
+    v.stream.end();
+  }
+};
+
+/** The device a pane of this worktree has focused most recently, or null when the tab shows none. */
+function focusedId(worktreeKey: string): string | null {
+  let best: View | null = null;
+  for (const v of views) {
+    if (v.worktreeKey === worktreeKey && (!best || v.focusAt >= best.focusAt)) best = v;
+  }
+  return best?.deviceId ?? null;
 }
 
-/** An image block in a tool result may hold at most 5 MB decoded; stay under it with room to spare. */
-const MAX_IMAGE_BYTES = 4_500_000;
+/** An agent tool had no device to act on. The answer lists the devices and how to pick one. */
+class NeedDevice extends Error {}
 
-/**
- * The simulator as a worker service. Every worktree gets one device named "Band – <worktree id>"
- * in the machine's default device set, where serve-sim can see it. The person may pick any other
- * iOS device in the panel; the worktree's stream and agent tools then act on it. Band shuts down
- * or deletes only its own devices, except for an explicit Power press on the device shown.
- */
-const devices = new DeviceSet();
-const helpers = new ServeSimHelpers();
-devices.onShutdown = (udid) => helpers.stop(udid);
+const summary = (d: SimDevice) =>
+  `${d.name} (${d.os}${d.model && d.model !== d.name ? `, ${d.model}` : ""}, ${d.state === "on" ? "on" : d.state === "booting" ? "booting" : "off"}) id ${d.id}`;
+
+async function needDeviceMessage(): Promise<string> {
+  const list = await fleet.list();
+  const lines = list.length ? list.map((d) => `- ${summary(d)}`).join("\n") : "- none found";
+  return [
+    "No device is open in this worktree's Simulator tab, and no device was named.",
+    "Pass `device` (an id or a name from this list) to act on one, or open the Simulator tab and pick or create a device in a pane. Band does not create devices on its own.",
+    "Devices on this worker:",
+    lines,
+  ].join("\n");
+}
+
+async function target(params: unknown, worktreeKey: string): Promise<SimDevice> {
+  const wanted = optStr(params, "device") ?? focusedId(worktreeKey);
+  if (!wanted) throw new NeedDevice(await needDeviceMessage());
+  try {
+    return await fleet.find(wanted);
+  } catch (err) {
+    if (err instanceof UnknownDevice && optStr(params, "device") === undefined) throw new NeedDevice(await needDeviceMessage());
+    throw err;
+  }
+}
+
+/** Runs a tool call on its device, turned on first, and answers with the device list when there is none. */
+function onDevice<T>(
+  work: (device: SimDevice, params: unknown, scope: { worktreeKey: string; worktreePath: string }) => Promise<T>,
+) {
+  return async (params: unknown, scope: { worktreeKey: string; worktreePath: string }) => {
+    try {
+      return await fleet.exclusive(async () => {
+        const device = await fleet.ensureOn(await target(params, scope.worktreeKey));
+        return work(device, params, scope);
+      });
+    } catch (err) {
+      if (err instanceof NeedDevice) return { content: [{ type: "text", text: err.message }] };
+      throw err;
+    }
+  };
+}
+
+const ok = { ok: true };
+
+async function insideWorktree(path: string, worktreePath: string, ext: string): Promise<string> {
+  const real = await realpath(path).catch(() => {
+    throw new Error(`${path} does not exist`);
+  });
+  const wt = await realpath(worktreePath);
+  if (!real.startsWith(wt + sep) || !real.endsWith(ext)) {
+    throw new Error(`path must be an ${ext} ${ext === ".app" ? "folder" : "file"} inside this worktree`);
+  }
+  return real;
+}
 
 defineWorkerService({
   onInit({ stateDir }) {
@@ -53,217 +138,200 @@ defineWorkerService({
   },
 
   calls: {
-    async status(_params, { worktreeKey }) {
-      const device = await devices.exclusive(() => devices.current(worktreeKey));
-      const screen = device.state === "Booted" ? await helpers.screen(device.udid) : null;
-      return {
-        udid: device.udid,
-        name: device.name,
-        state: device.state,
-        screen,
-        maxBooted: maxBooted(),
-      };
+    /** Every device on the worker, for the picker, with whether each platform can run here. */
+    async devices() {
+      const [devices, platforms] = await Promise.all([fleet.list(), fleet.platforms()]);
+      return { devices, platforms };
     },
 
-    async boot(_params, { worktreeKey }) {
-      const device = await devices.exclusive(() => devices.ensureBooted(worktreeKey));
-      return { udid: device.udid, name: device.name, state: device.state };
+    /** The choices of the "New ..." forms. */
+    async options() {
+      const [ios, android] = await Promise.all([
+        fleet.backends.ios.options().catch((err: Error) => ({ runtimes: [], error: err.message })),
+        fleet.backends.android.options(),
+      ]);
+      return { ios, android };
     },
 
-    /** Every available iOS device, for the panel's picker, with the one this worktree acts on marked. */
-    async devices(_params, { worktreeKey }) {
-      const current = await devices.exclusive(() => devices.current(worktreeKey));
-      const list = (await devices.listAll()).map((d) => ({ ...d, group: devices.group(d, worktreeKey) }));
-      return { current: current.udid, devices: list };
+    async create(params) {
+      const platform = str(params, "platform");
+      if (platform !== "ios" && platform !== "android") throw new Error("platform must be ios or android");
+      const device = await fleet.exclusive(() => fleet.create(platform as Platform, obj(params)));
+      return { device };
     },
 
-    /** Makes a device the one the panel streams and the agent tools act on, for this worktree. */
-    async select(params, { worktreeKey }) {
-      const udid = str(params, "udid");
-      const device = await devices.exclusive(() => devices.select(worktreeKey, udid));
-      return { udid: device.udid, name: device.name, state: device.state };
+    /** The worktree's canvas: its own, else its repo's, else none (one empty pane). */
+    async layout(_params, { worktreeKey, worktreePath }) {
+      return store.get(worktreeKey, worktreePath);
     },
 
-    /** Shuts down the device shown in the panel: the one this worktree acts on, nothing else. */
-    async shutdown(_params, { worktreeKey }) {
-      const device = await devices.exclusive(async () => {
-        const d = await devices.current(worktreeKey);
-        if (d.state !== "Shutdown") await devices.shutdown(d.udid);
-        return d;
+    async saveLayout(params, { worktreeKey, worktreePath }) {
+      await store.save(worktreeKey, worktreePath, obj(params).layout);
+      return ok;
+    },
+
+    /** Turns a device off. The Power button of a pane calls this for the pane's device. */
+    async shutdown(params) {
+      const id = str(params, "device");
+      await fleet.exclusive(async () => {
+        const device = await fleet.find(id);
+        if (device.state !== "off") await fleet.turnOff(device);
       });
-      return { udid: device.udid, name: device.name, state: "Shutdown" };
+      return ok;
     },
 
-    /** Turns the device to an orientation (portrait or landscape_left). */
-    async rotate(params, { worktreeKey }) {
+    async rotate(params) {
       const orientation = str(params, "orientation");
-      if (!ORIENTATIONS.includes(orientation)) {
-        throw new Error(`orientation must be one of ${ORIENTATIONS.join(", ")}`);
-      }
-      const device = await devices.exclusive(() => devices.ensureBooted(worktreeKey));
-      await helpers.rotate(device.udid, orientation);
-      return { ok: true };
+      const id = str(params, "device");
+      await fleet.exclusive(async () => {
+        const device = await fleet.ensureOn(await fleet.find(id));
+        await fleet.backend(device).rotate(device, orientation);
+      });
+      return ok;
     },
 
-    /**
-     * Answers with an image block, which Band passes to the agent as an image, and a short text
-     * block with the size and scale. The PNG is read once and deleted. A PNG over the image limit
-     * is taken again as a JPEG.
-     */
-    async screenshot(_params, { worktreeKey }) {
-      const device = await devices.exclusive(() => devices.ensureBooted(worktreeKey));
-      const dir = join(getStateDir(), "screenshots");
-      await mkdir(dir, { recursive: true });
-      const base = join(dir, `shot-${device.udid}-${Date.now()}`);
-      const take = async (type: "png" | "jpeg") => {
-        const file = `${base}.${type === "png" ? "png" : "jpg"}`;
-        try {
-          await run("xcrun", ["simctl", "io", device.udid, "screenshot", `--type=${type}`, file]);
-          return await readFile(file);
-        } finally {
-          await rm(file, { force: true });
-        }
-      };
-      let image = await take("png");
-      let mimeType: "image/png" | "image/jpeg" = "image/png";
-      let size: { width: number; height: number } | null = pngSize(image);
-      if (image.length > MAX_IMAGE_BYTES) {
-        image = await take("jpeg");
-        mimeType = "image/jpeg";
-        size = jpegSize(image) ?? size;
-      }
-      const screen = await helpers.screen(device.udid);
-      const scale = screen && size ? Math.round((size.width / screen.width) * 100) / 100 : null;
+    /** The devices, and the one the focused pane shows; the answer to "what can I act on". */
+    async list(_params, { worktreeKey }) {
+      const devices = await fleet.list();
+      return { focused: focusedId(worktreeKey), devices };
+    },
+
+    status: onDevice(async (device) => {
+      const screen = await fleet.backend(device).screen(device);
+      return { device, screen };
+    }),
+
+    /** Answers with an image block, which Band passes to the agent as an image, and a short text block. */
+    screenshot: onDevice(async (device) => {
+      const shot = await fleet.backend(device).screenshot(device);
+      const unit = device.platform === "ios" ? "points: pixels divided by scale" : "pixels";
       return {
         content: [
           {
             type: "text",
-            text: `Screenshot ${size?.width ?? "?"}x${size?.height ?? "?"} pixels, scale ${scale ?? "unknown"}. Coordinates for simulator_tap are in points: pixels divided by scale.`,
+            text: `${device.name}: screenshot ${shot.width}x${shot.height} pixels, scale ${shot.scale ?? "unknown"}. Coordinates for simulator_tap are in ${unit}.`,
           },
-          { type: "image", data: image.toString("base64"), mimeType },
+          { type: "image", data: shot.data.toString("base64"), mimeType: shot.mimeType },
         ],
       };
-    },
+    }),
 
-    async describe(_params, { worktreeKey }) {
-      const device = await devices.exclusive(() => devices.ensureBooted(worktreeKey));
-      return helpers.describe(device.udid);
-    },
+    describe: onDevice((device) => fleet.backend(device).describe(device)),
 
-    async tap(params, { worktreeKey }) {
-      const x = num(params, "x");
-      const y = num(params, "y");
-      const device = await devices.exclusive(() => devices.ensureBooted(worktreeKey));
-      await helpers.tap(device.udid, x, y);
-      return { ok: true };
-    },
+    tap: onDevice(async (device, params) => {
+      await fleet.backend(device).tap(device, num(params, "x"), num(params, "y"));
+      return ok;
+    }),
 
-    async type(params, { worktreeKey }) {
-      const text = str(params, "text");
-      const device = await devices.exclusive(() => devices.ensureBooted(worktreeKey));
-      await helpers.type(device.udid, text);
-      return { ok: true };
-    },
+    type: onDevice(async (device, params) => {
+      await fleet.backend(device).type(device, str(params, "text"));
+      return ok;
+    }),
 
-    async button(params, { worktreeKey }) {
-      const name = serveSimButton(str(params, "button"));
-      const device = await devices.exclusive(() => devices.ensureBooted(worktreeKey));
-      await helpers.button(device.udid, name);
-      return { ok: true };
-    },
+    button: onDevice(async (device, params) => {
+      await fleet.backend(device).button(device, str(params, "button"));
+      return ok;
+    }),
 
-    async openUrl(params, { worktreeKey }) {
+    openUrl: onDevice(async (device, params) => {
       const url = str(params, "url");
       if (url.startsWith("-")) throw new Error("url must not start with -");
-      const device = await devices.exclusive(() => devices.ensureBooted(worktreeKey));
-      await run("xcrun", ["simctl", "openurl", device.udid, url]);
-      return { ok: true };
-    },
+      await fleet.backend(device).openUrl(device, url);
+      return ok;
+    }),
 
-    async install(params, { worktreeKey, worktreePath }) {
-      const path = str(params, "path");
-      const app = await realpath(path).catch(() => {
-        throw new Error(`${path} does not exist`);
-      });
-      const wt = await realpath(worktreePath);
-      if (!app.startsWith(wt + sep) || !app.endsWith(".app")) {
-        throw new Error("path must be an .app folder inside this worktree");
-      }
-      const device = await devices.exclusive(() => devices.ensureBooted(worktreeKey));
-      await run("xcrun", ["simctl", "install", device.udid, app], { timeoutMs: 5 * 60_000 });
-      return { ok: true };
-    },
+    install: onDevice(async (device, params, { worktreePath }) => {
+      const backend = fleet.backend(device);
+      const real = await insideWorktree(str(params, "path"), worktreePath, backend.installExt);
+      await backend.install(device, real);
+      return ok;
+    }),
 
-    async launch(params, { worktreeKey }) {
-      const bundleId = str(params, "bundleId");
-      if (bundleId.startsWith("-")) throw new Error("bundleId must not start with -");
-      const device = await devices.exclusive(() => devices.ensureBooted(worktreeKey));
-      const { stdout } = await run("xcrun", ["simctl", "launch", device.udid, bundleId]);
-      return { output: stdout.trim() };
-    },
+    launch: onDevice(async (device, params) => {
+      const id = str(params, "bundleId");
+      if (id.startsWith("-")) throw new Error("bundleId must not start with -");
+      return { output: await fleet.backend(device).launch(device, id) };
+    }),
   },
 
   streams: {
     /**
-     * The live screen. Messages to the viewer are one text `{"type":"info"}` and then one binary
-     * JPEG per frame. Messages from the viewer are JSON: `touch`, `button`, `key` and `text`.
-     * The stream acts on the worktree's current device, so the panel reopens it after a pick.
+     * The live screen of one pane. `params.device` is the device id. Messages to the viewer are
+     * text `{"type":"booting"}`, `{"type":"info"}` and `{"type":"off"}` (the device was turned
+     * off), then one binary JPEG per frame. Messages from the viewer are JSON: `focus`, `touch`,
+     * `button`, `key` and `text`.
      */
     screen(params, { worktreeKey }, stream) {
-      // Band waits only a few seconds for stream.open to answer, and a first boot takes minutes
-      // (a clone of a new base device). So the handlers are returned at once and the device boots
-      // behind them. The viewer sees a text "booting" message, then info, then frames.
-      let live: ScreenStream | null = null;
+      const deviceRef = str(params, "device");
+      const view: View = { worktreeKey, deviceId: deviceRef, focusAt: Date.now(), stream, live: null };
+      views.add(view);
       let closed = false;
+      // Band waits only a few seconds for stream.open to answer and a first boot takes minutes, so
+      // the handlers are returned at once and the device boots behind them.
       void (async () => {
         try {
           stream.send(JSON.stringify({ type: "booting" }));
-          const device = await devices.exclusive(() =>
-            devices.ensureBooted(worktreeKey, (p) => {
+          const device = await fleet.exclusive(async () =>
+            fleet.ensureOn(await fleet.find(deviceRef), (p) => {
               if (!closed) stream.send(JSON.stringify({ type: "booting", ...p }));
             }),
           );
-          const helper = await helpers.helper(device.udid);
-          const screen = (await helpers.screen(device.udid)) ?? { width: 0, height: 0 };
+          view.deviceId = device.id;
           if (closed) return;
-          live = openScreenStream(
-            helper,
-            helpers,
-            { ...screen, udid: device.udid, name: device.name, model: device.model },
-            // Band sets `profile`: "direct" for the desktop app on this machine (full size and
-            // rate), "hub" when the hub carries the frames (half size, 15 fps at most).
-            obj(params),
-          );
+          const live = await fleet.backend(device).openStream(device, params);
+          if (closed) {
+            live.close();
+            return;
+          }
+          view.live = live;
           for await (const message of live.output) {
-            if (closed) break;
+            if (closed || view.live !== live) break;
             stream.send(message);
           }
         } catch (err) {
           console.error(`simulator screen: ${err instanceof Error ? err.message : err}`);
+          if (!closed) stream.send(JSON.stringify({ type: "error", message: err instanceof Error ? err.message : String(err) }));
         } finally {
-          if (!closed) stream.end();
+          // The service ends the stream, so Band will not call onClose: the pane is gone from the registry here.
+          if (!closed) {
+            views.delete(view);
+            stream.end();
+          }
         }
       })();
       return {
-        onMessage: (message) => live?.write(message),
+        onMessage: (message) => {
+          if (typeof message === "string" && message.startsWith('{"type":"focus"')) {
+            view.focusAt = Date.now();
+            fleet.touch(view.deviceId);
+            return;
+          }
+          view.live?.write(message);
+        },
         onClose: () => {
           closed = true;
-          live?.close();
+          views.delete(view);
+          view.live?.close();
         },
       };
     },
   },
 
   async onRelease(worktreeKey, reason) {
-    await devices.exclusive(() =>
-      reason === "removed"
-        ? devices.deleteWorktree(worktreeKey)
-        : devices.shutdownWorktree(worktreeKey),
+    if (reason === "removed") {
+      await store.forget(worktreeKey);
+      return;
+    }
+    // The worktree lets go of its screens: turn off the devices Band booted that nobody else watches.
+    const layout = await store.own(worktreeKey);
+    const mine = new Set(layout ? deviceIds(layout) : []);
+    await fleet.exclusive(() =>
+      fleet.shutdownOurs((d) => mine.has(d.id) && ![...views].some((v) => v.deviceId === d.id && v.worktreeKey !== worktreeKey)),
     );
   },
 
   async onStop() {
-    await devices.exclusive(() => devices.shutdownAll());
-    await helpers.stopAll();
+    await fleet.exclusive(() => fleet.shutdownOurs());
+    await Promise.all(Object.values(fleet.backends).map((b) => b.stopAll()));
   },
 });
