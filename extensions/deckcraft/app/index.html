@@ -132,20 +132,23 @@
       }
 
       function pinch(s) {
-        let start = null, lastTap = 0;
+        let start = null, lastTap = 0, down = null, moved = false;
         const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
         s.el.addEventListener("touchstart", (e) => {
           if (e.touches.length === 2) start = { d: dist(e.touches), z: s.z };
           else if (e.touches.length === 1) start = null;
+          // A swipe or the end of a pinch is not a tap, so it never counts toward a double tap.
+          if (e.touches.length === 1) { down = { x: e.touches[0].clientX, y: e.touches[0].clientY }; moved = false; } else moved = true;
         }, { passive: true });
         s.el.addEventListener("touchmove", (e) => {
-          if (e.touches.length !== 2 || !start) return;
           const t = e.touches;
+          if (t.length === 1 && down && Math.hypot(t[0].clientX - down.x, t[0].clientY - down.y) > 10) moved = true;
+          if (t.length !== 2 || !start) return;
           zoomAt(s, start.z * (dist(t) / start.d), (t[0].clientX + t[1].clientX) / 2, (t[0].clientY + t[1].clientY) / 2);
         }, { passive: true });
         s.el.addEventListener("touchend", (e) => {
           if (e.touches.length < 2) start = null;
-          if (e.touches.length === 0 && e.changedTouches.length === 1) {
+          if (e.touches.length === 0 && e.changedTouches.length === 1 && !moved) {
             const now = Date.now(), t = e.changedTouches[0];
             if (now - lastTap < 300) { zoomAt(s, s.z > 1.05 ? 1 : 2.5, t.clientX, t.clientY); lastTap = 0; } else lastTap = now;
           }
