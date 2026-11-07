@@ -57,3 +57,19 @@ A frame scrolled out of view or in a background tab stops drawing, and MCP reque
 ## Compact layout and selection
 
 `DeckcraftEditor::set_layout` collapses the ribbon, closes the task pane and notes, and sets the slide list to its narrowest width (150 points). `selection` reports the first selected shape as `slide<index>!<shape id>`, with the shape's text, or the selected text when a range inside it is selected. `inspect_slide {index}` lists the shape with that id. The protocol is described in the [root README](../../README.md#compact-layout-and-selection), and `verify.mjs` runs the shared scenarios from `scripts/verify-compact.mjs`.
+
+## Compact preview
+
+In the compact layout the extension opens a preview first and shows the egui editor only after the person presses **Edit**. The regular layout opens the editor directly and never shows the preview.
+
+- `app/index.html` holds the preview as plain HTML over the canvas (`window.bandPreview`): a horizontal scroll-snap track with one slide per screen, a slide counter, previous and next buttons, arrow and page keys, pinch zoom and double tap zoom (up to 4x, panned by native scrolling), and a Notes toggle that shows the slide's speaker notes as selectable text.
+- `app/src/preview.rs` draws the slides. For a slide near the one on screen it calls `deckcraft_engine::cmd::file::render_png` (the renderer behind `render_slide`) at 1200 pixels wide and hands the PNG to the page as a `blob:` URL. It draws one slide per frame and the page keeps the current slide and one on each side, so a long deck stays responsive. Nothing leaves the frame.
+- `DeckcraftEditor::preview_frame` runs after every `Bridge::sync`. It compares the open presentation's allocation with the one the preview was built from. A `reload`, an edit in the editor and an agent's tool call each replace it, and the preview redraws the slides it shows. The pictures stay on screen until the new ones arrive.
+- Edit and the **Preview** pill shown over the editor only switch which view is visible. The presentation, its unsaved edits, the dirty state and saving stay in the editor, so none of them changes. Layout changes keep the choice: after Edit, a switch to regular and back to compact stays in the editor.
+- The page also listens on Band's port for `init.theme` and `theme` and sets the preview's colors from the `background`, `foreground`, `muted-foreground`, `border`, `primary` and `primary-foreground` tokens. The slides keep their own colors. Without tokens it follows the system color scheme.
+- The preview reports no `selection`. A picture has no shapes to address, so while the preview is up the extension sends `null`, and the editor's selection returns when Edit is pressed.
+- While the preview is up it swallows key events, so an arrow key pages through slides and never nudges a shape in the editor behind it.
+
+The touch shim in `crates/band-editor` swallows every touch in compact mode and replays it on the canvas, which would break taps and scrolling on the preview. It leaves a touch alone when it starts inside an element marked `data-band-native`, and the preview's root and the Preview pill carry that attribute.
+
+`verify.mjs` covers the preview with real touch input (swipe, pinch, Edit and Notes). The next button and the Preview pill get a `click` event instead of a tap, because headless Chrome drops pointer input to this framed page below about y=750.
