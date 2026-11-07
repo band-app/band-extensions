@@ -1,7 +1,7 @@
 {
   "id": "simulator",
   "name": "iOS Simulator",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "extensionApi": 1,
   "contributes": {
     "workerServices": [
