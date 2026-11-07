@@ -11,7 +11,7 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use band_editor::{Editor, Layout, Rect, Selection, Theme};
+use band_editor::{Editor, Layout, Rect, Selection};
 use serde_json::json;
 use vectorcraft_ui_egui::Services;
 use vectorcraft_ui_egui::VectorcraftApp;
@@ -228,9 +228,9 @@ impl Editor for VectorcraftEditor {
         }
     }
 
-    fn set_theme(&mut self, theme: Theme) {
+    fn set_theme(&mut self, mode: &str, tokens: &serde_json::Value) {
         if let Some(preview) = &self.preview {
-            preview.set_theme(&theme);
+            preview.set_theme(mode, tokens);
         }
     }
 

@@ -77,7 +77,7 @@ When Band sends `layout: "compact"`, the page opens on a preview instead of the 
 - The bar, the well around the page and the buttons follow Band's `theme` (`background`, `foreground`, `border`, `muted`, `primary`, `primary-foreground`, with fallbacks by mode). The page is white, because a drawing is drawn for white.
 - The preview reports no selection. A tap there selects nothing.
 - The browser rasterizes the whole SVG at once. There is no lazy rendering: the engine writes one SVG per document.
-- Shared crate changes: `Editor::set_theme(Theme)` (default ignores it), and the touch shim leaves touches that start inside an element with `data-band-native`.
+- Shared crate change: the touch shim leaves touches that start inside an element with `data-band-native`.
 
 ## Compact layout and selection
 

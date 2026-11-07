@@ -14,12 +14,12 @@ const scratch = mkdtempSync(join(tmpdir(), "catalog-test-"));
 after(() => rmSync(scratch, { recursive: true, force: true }));
 
 /** Packs { ext, version, workerServices, meta } the way scripts/package.sh does. */
-function pack({ ext, version, workerServices = [], meta = { description: `The ${ext} extension`, minBand: "0.61.0" }, noMeta = false }) {
+function pack({ ext, version, workerServices = [], languageServers = [], meta = { description: `The ${ext} extension`, minBand: "0.61.0" }, noMeta = false }) {
   const dir = join(scratch, `${ext}-${version}`);
   mkdirSync(join(dir, ext), { recursive: true });
   writeFileSync(
     join(dir, ext, "band-extension.json"),
-    JSON.stringify({ id: ext, name: ext.toUpperCase(), version, extensionApi: 1, contributes: { workerServices } }),
+    JSON.stringify({ id: ext, name: ext.toUpperCase(), version, extensionApi: 1, contributes: { workerServices, languageServers } }),
   );
   if (!noMeta) writeFileSync(join(dir, ext, "catalog.json"), JSON.stringify(meta));
   const file = join(scratch, `${ext}-${version}.tar.gz`);
@@ -48,6 +48,20 @@ const fetcher = (releases) => async (url) => {
 };
 
 describe("catalog generator", () => {
+  it("lists a language server extension as a worker extension with its requirements", async () => {
+    const archive = pack({
+      ext: "typescript-lsp",
+      version: "0.1.0",
+      languageServers: [{ id: "typescript", languages: ["typescript"], files: ["*.ts"], command: "a.mjs", requires: ["node"] }],
+      meta: { description: "TypeScript", minBand: "0.64.0" },
+    });
+    const releases = [release("typescript-lsp", "0.1.0", archive)];
+    const [entry] = await buildCatalog({ releases, fetchAsset: fetcher(releases), warn: () => {} });
+    assert.equal(entry.worker, true);
+    assert.deepEqual(entry.requires, ["node"]);
+    assert.equal(entry.minBand, "0.64.0");
+  });
+
   it("lists the newest plain release of each extension with every field Band reads", async () => {
     const sim = pack({
       ext: "simulator",

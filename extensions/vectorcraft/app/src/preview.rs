@@ -15,7 +15,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use band_editor::Theme;
+use serde_json::Value;
 use vectorcraft_svg::{ExportOptions, ObjectIds};
 use wasm_bindgen::JsCast as _;
 use wasm_bindgen::closure::Closure;
@@ -126,7 +126,7 @@ impl Preview {
             scale: Cell::new(1.0),
             pinch: Cell::new(None),
         }));
-        this.set_theme(&Theme::default());
+        this.set_theme("", &Value::Null);
         let p = this.clone();
         on_click(&edit, move || p.edit());
         let p = this.clone();
@@ -181,10 +181,10 @@ impl Preview {
 
     /// Follow Band's theme. The drawing keeps its own colors; only the bar, the well around the
     /// page and the buttons change.
-    pub fn set_theme(&self, theme: &Theme) {
-        let dark = theme.mode != "light";
+    pub fn set_theme(&self, mode: &str, tokens: &Value) {
+        let dark = mode != "light";
         let pick = |name: &str, light: &str, dark_value: &str| {
-            theme.token(name).map(str::to_string).unwrap_or_else(|| (if dark { dark_value } else { light }).to_string())
+            tokens.get(name).and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| (if dark { dark_value } else { light }).to_string())
         };
         let bg = pick("background", "#ffffff", "#262626");
         let fg = pick("foreground", "#1a1a1a", "#e6e6e6");

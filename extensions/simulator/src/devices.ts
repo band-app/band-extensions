@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { config, getStateDir } from "./config.ts";
 import { run } from "./tools.ts";
@@ -7,6 +7,18 @@ export interface Device {
   udid: string;
   name: string;
   state: string;
+  /** The hardware model, such as "iPhone 17 Pro", when simctl names the device type. */
+  model?: string;
+}
+
+/** What the service tells the panel while a device is made ready. */
+export type BootPhase = { phase: "creating" | "cloning" | "booting"; name?: string; model?: string };
+export type OnPhase = (phase: BootPhase) => void;
+
+/** "iPhone 17 Pro" from "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro". */
+export function modelFromType(identifier: string | undefined): string | undefined {
+  const m = /SimDeviceType\.(.+)$/.exec(identifier ?? "");
+  return m ? (m[1] as string).replace(/-/g, " ") : undefined;
 }
 
 /** A device the picker offers: Band's own or the person's. `runtime` is the iOS version, such as "26.5". */
@@ -16,10 +28,13 @@ export interface PickerDevice extends Device {
   owned: boolean;
 }
 
+/** Where the picker lists a device: this worktree's own, another worktree's, or the person's. */
+export type PickerGroup = "this" | "other" | "mine";
+
 interface SimctlDevices {
   devices: Record<
     string,
-    Array<{ udid: string; name: string; state: string; isAvailable?: boolean }>
+    Array<{ udid: string; name: string; state: string; isAvailable?: boolean; deviceTypeIdentifier?: string }>
   >;
 }
 
@@ -80,6 +95,10 @@ export class DeviceSet {
   private readonly lastUsed = new Map<string, number>();
   /** Called after a device shuts down, so its serve-sim helper goes too. */
   onShutdown: (udid: string) => Promise<void> | void = () => {};
+  /** Whether a viewer is watching the device now. A booted device with one is never swept. */
+  hasLiveStream: (udid: string) => boolean = () => false;
+  /** The folder each worktree was last served from, by worktree key. Loaded from the state dir on first use. */
+  private folders: Map<string, string> | null = null;
 
   /** Runs `fn` after every earlier lifecycle operation, so creates, boots and shutdowns never overlap. */
   exclusive<T>(fn: () => Promise<T>): Promise<T> {
@@ -99,7 +118,12 @@ export class DeviceSet {
     return Object.values(parsed.devices)
       .flat()
       .filter((d) => d.isAvailable !== false && d.name.startsWith(owned))
-      .map(({ udid, name, state }) => ({ udid, name, state }));
+      .map(({ udid, name, state, deviceTypeIdentifier }) => ({
+        udid,
+        name,
+        state,
+        model: modelFromType(deviceTypeIdentifier),
+      }));
   }
 
   /**
@@ -117,10 +141,23 @@ export class DeviceSet {
       const runtime = (m[1] as string).replace(/-/g, ".");
       for (const d of list) {
         if (d.isAvailable === false || d.name === baseName()) continue;
-        out.push({ udid: d.udid, name: d.name, state: d.state, runtime, owned: d.name.startsWith(owned) });
+        out.push({
+          udid: d.udid,
+          name: d.name,
+          state: d.state,
+          model: modelFromType(d.deviceTypeIdentifier),
+          runtime,
+          owned: d.name.startsWith(owned),
+        });
       }
     }
     return out.sort((a, b) => a.name.localeCompare(b.name) || a.udid.localeCompare(b.udid));
+  }
+
+  /** The picker's group of a device for a worktree. */
+  group(d: PickerDevice, worktreeKey: string): PickerGroup {
+    if (d.name === deviceName(worktreeKey)) return "this";
+    return d.owned ? "other" : "mine";
   }
 
   private async loadSelection(): Promise<Map<string, string>> {
@@ -148,6 +185,69 @@ export class DeviceSet {
     }
   }
 
+  private async loadFolders(): Promise<Map<string, string>> {
+    if (this.folders) return this.folders;
+    const map = new Map<string, string>();
+    try {
+      const parsed = JSON.parse(await readFile(join(getStateDir(), "worktrees.json"), "utf8")) as unknown;
+      if (typeof parsed === "object" && parsed !== null) {
+        for (const [k, v] of Object.entries(parsed)) if (typeof v === "string") map.set(k, v);
+      }
+    } catch {
+      // No file yet, or no state dir (tests): nothing is known.
+    }
+    this.folders = map;
+    return map;
+  }
+
+  private async saveFolders(): Promise<void> {
+    try {
+      const dir = getStateDir();
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, "worktrees.json"), JSON.stringify(Object.fromEntries(this.folders ?? [])));
+    } catch {
+      // The sweep then skips worktrees it cannot place.
+    }
+  }
+
+  /**
+   * Remembers where a worktree lives. The worker's list of served worktrees is in memory and
+   * gone after a restart, so this index in the state dir is how a removed worktree is found later.
+   */
+  async rememberFolder(worktreeKey: string, folder: string): Promise<void> {
+    const map = await this.loadFolders();
+    if (map.get(worktreeKey) === folder) return;
+    map.set(worktreeKey, folder);
+    await this.saveFolders();
+  }
+
+  /** The keys of the worktrees last served from `folder`. */
+  async keysAt(folder: string): Promise<string[]> {
+    return [...(await this.loadFolders())].filter(([, f]) => f === folder).map(([k]) => k);
+  }
+
+  /**
+   * Deletes the device of every worktree whose folder is gone. Only a device named
+   * "<prefix> \u2013 <worktree key>" whose key has a known folder that no longer exists is deleted.
+   * The base device, a device without the prefix, a device of a worktree whose folder exists, a
+   * device with no known folder and a booted device someone is watching all stay.
+   */
+  async sweepRemoved(exists: (folder: string) => Promise<boolean> = folderExists): Promise<string[]> {
+    const folders = await this.loadFolders();
+    const owned = `${namePrefix()} \u2013 `;
+    const deleted: string[] = [];
+    for (const d of await this.list()) {
+      if (!d.name.startsWith(owned) || d.name === baseName()) continue;
+      const key = d.name.slice(owned.length);
+      const folder = folders.get(key);
+      if (folder === undefined || (await exists(folder))) continue;
+      if (d.state === "Booted" && this.hasLiveStream(d.udid)) continue;
+      await this.deleteWorktree(key);
+      deleted.push(d.name);
+    }
+    return deleted;
+  }
+
   /** Makes `udid` the device of the worktree, or goes back to the worktree's own device when `udid` is null. */
   async select(worktreeKey: string, udid: string | null): Promise<Device> {
     const map = await this.loadSelection();
@@ -168,7 +268,7 @@ export class DeviceSet {
    * The device the worktree acts on: the one picked in the panel while it still exists, otherwise
    * the worktree's own device (cloned on first use).
    */
-  async current(worktreeKey: string): Promise<Device> {
+  async current(worktreeKey: string, onPhase?: OnPhase): Promise<Device> {
     const map = await this.loadSelection();
     const udid = map.get(worktreeKey);
     if (udid) {
@@ -177,7 +277,7 @@ export class DeviceSet {
       map.delete(worktreeKey);
       await this.saveSelection();
     }
-    return this.ensureDevice(worktreeKey);
+    return this.ensureDevice(worktreeKey, onPhase);
   }
 
   /** The newest available iOS runtime and the newest iPhone Pro it supports, unless the env names them. */
@@ -203,40 +303,43 @@ export class DeviceSet {
     return { type: chosen.identifier, runtime: runtime.identifier };
   }
 
-  private async baseDevice(): Promise<Device> {
+  private async baseDevice(onPhase?: OnPhase): Promise<Device> {
     const existing = (await this.list()).find((d) => d.name === baseName());
     if (existing) return existing;
+    onPhase?.({ phase: "creating" });
     const { type, runtime } = await this.pickBase();
     const { stdout } = await this.simctl(["create", baseName(), type, runtime]);
     return { udid: stdout.trim(), name: baseName(), state: "Shutdown" };
   }
 
   /** The worktree's device, cloned from the base device on first use. */
-  async ensureDevice(worktreeKey: string): Promise<Device> {
+  async ensureDevice(worktreeKey: string, onPhase?: OnPhase): Promise<Device> {
     const name = deviceName(worktreeKey);
     const found = (await this.list()).find((d) => d.name === name);
     if (found) return found;
-    const base = await this.baseDevice();
+    const base = await this.baseDevice(onPhase);
     if (base.state !== "Shutdown") await this.simctl(["shutdown", base.udid]);
+    onPhase?.({ phase: "cloning" });
     const { stdout } = await this.simctl(["clone", base.udid, name], 5 * 60_000);
-    return { udid: stdout.trim(), name, state: "Shutdown" };
+    return { udid: stdout.trim(), name, state: "Shutdown", model: base.model };
   }
 
   /**
    * Boots the worktree's device, first shutting down the least recently used booted devices until
    * there is room under the cap.
    */
-  async ensureBooted(worktreeKey: string): Promise<Device> {
-    return this.bootDevice(await this.current(worktreeKey));
+  async ensureBooted(worktreeKey: string, onPhase?: OnPhase): Promise<Device> {
+    return this.bootDevice(await this.current(worktreeKey, onPhase), onPhase);
   }
 
   /**
    * Boots a device. Only Band's own devices are shut down to make room; a device of the person's
    * counts for nothing and is never evicted.
    */
-  async bootDevice(device: Device): Promise<Device> {
+  async bootDevice(device: Device, onPhase?: OnPhase): Promise<Device> {
     this.lastUsed.set(device.udid, Date.now());
     if (device.state === "Booted") return device;
+    onPhase?.({ phase: "booting", name: device.name, model: device.model });
     const booted = (await this.list()).filter(
       (d) => d.state === "Booted" && d.udid !== device.udid && d.name !== baseName(),
     );
@@ -278,6 +381,8 @@ export class DeviceSet {
   /** Shuts down and deletes the worktree's device. */
   async deleteWorktree(worktreeKey: string): Promise<void> {
     await this.forgetSelection(worktreeKey);
+    const folders = await this.loadFolders();
+    if (folders.delete(worktreeKey)) await this.saveFolders();
     const name = deviceName(worktreeKey);
     const device = (await this.list()).find((d) => d.name === name);
     if (!device) return;
@@ -291,5 +396,15 @@ export class DeviceSet {
     for (const d of await this.list().catch(() => [])) {
       if (d.state === "Booted") await this.shutdown(d.udid).catch(() => undefined);
     }
+  }
+}
+
+/** Whether a folder exists. Only a missing folder counts as gone; any other error keeps the device. */
+async function folderExists(folder: string): Promise<boolean> {
+  try {
+    await stat(folder);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code !== "ENOENT";
   }
 }

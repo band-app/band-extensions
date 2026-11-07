@@ -29,20 +29,6 @@ impl Layout {
     }
 }
 
-/// Band's theme: `mode` is `"light"` or `"dark"` (empty when Band sent none) and `tokens` are its
-/// semantic colors by name, such as `background` and `foreground`, as CSS color strings.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Theme {
-    pub mode: String,
-    pub tokens: Vec<(String, String)>,
-}
-
-impl Theme {
-    pub fn token(&self, name: &str) -> Option<&str> {
-        self.tokens.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str())
-    }
-}
-
 /// A rectangle in the editor's own document units.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rect {
