@@ -45,3 +45,15 @@ A frame scrolled out of view or in a background tab stops drawing, and MCP reque
 ## Compact layout and selection
 
 `GridcraftEditor::set_layout` collapses the ribbon, turns the formula bar and status bar off and sets the interface to 125% through `view.interfaceScale`; `regular` puts back what was there. `selection` reports the active range as `Sheet1!B2:C4` with the cells as TSV (read with `sheet.read`, only up to 5000 cells), recomputed only when the document revision or selection changes. `read_range` accepts the address as it is. The protocol is described in the [root README](../../README.md#compact-layout-and-selection), and `verify.mjs` runs the shared scenarios from `scripts/verify-compact.mjs`.
+
+## Compact preview
+
+In the compact layout the file opens in a preview, not the egui editor. `app/src/sheet_html.rs` builds a `<table>` for one sheet from the engine: the text is `display::cell_text`, so number formats and dates match the editor, and each engine style becomes one CSS class (bold, italic, underline, font size and colour, solid fill, borders, alignment, wrap, indent). It also draws merged cells, column widths, row heights, hidden rows and columns, and the column and row labels, which stay in place while the sheet scrolls. A sheet is drawn 400 rows at a time and the next page loads when the person scrolls near the end. Columns after the 200th are cut. Document text is escaped, and nothing is fetched.
+
+`index.html` holds the page (`window.gcPreview`): a sheet picker, an Edit button, the table, and a bar that shows the address, value and formula of the tapped cell. The page scrolls and pinch-zooms natively, and its chrome follows the `theme` message (`background`, `foreground`, `border`, `mutedForeground`, `primary`, `mode`). The sheet keeps white paper and the document's colours.
+
+`GridcraftEditor::frame` runs after each frame. It redraws the table when the document's revision, the sheet or the row count changes, so edits made in edit mode and a `reload` show up. The egui canvas keeps running under the preview, so Edit and "Preview" only swap what is visible. Neither touches the workbook, its unsaved edits or the dirty state, and saving works as before. Picking a sheet in the preview does not change the workbook's active sheet.
+
+The preview reports no `selection`. The active cell of the editor underneath is not what the person is looking at, and following taps would mean moving the engine's selection. The editor reports its selection again after Edit.
+
+The overlay carries `data-native-touch`, which the compact touch shim in `crates/band-editor` skips, so touches in it are not turned into taps and wheel events.

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" id="gc-viewport">
   <title>GridCraft</title>
   <script>
     // Band sends band:hello when the frame loads, before the wasm has compiled. Keep the port
@@ -10,8 +10,136 @@
     addEventListener("message", (e) => {
       if (!window.bandHelloPort && e.source === parent && e.data && e.data.type === "band:hello" && e.data.extensionApi === 1 && e.ports[0]) {
         window.bandHelloPort = e.ports[0];
+        // The preview only listens for the theme. It does not start the port: the app does that
+        // when it sets its own handler, and a port started earlier would drop the app's init.
+        if (window.gcPreview) window.gcPreview.watch(e.ports[0]);
       }
     });
+  </script>
+  <script>
+    // The compact preview's page: a header (sheet switcher, Edit), the table the app draws from the
+    // engine, and a bar showing the tapped cell. The app (editor.rs) fills it through render() and
+    // reads what the person did through drain(). Nothing here reaches the network.
+    window.gcPreview = (() => {
+      const events = [];
+      let root, scroller, sheetEl, selectEl, detailEl, noteEl, sentinel, backBtn, observer;
+      let theme = {}, mode = "", hasMore = false, waiting = false, sheetName = "", selected = null, wake = () => {};
+      const push = (e) => { events.push(e); wake(); };
+      const tok = (t, ...names) => { for (const n of names) { const v = t[n] ?? t["--" + n]; if (typeof v === "string" && v) return v; } return null; };
+      const paint = () => {
+        if (!root) return;
+        const dark = mode ? mode === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+        const t = theme.tokens || {};
+        const set = (k, v) => root.style.setProperty(k, v);
+        set("--gc-bg", tok(t, "background") || (dark ? "#1e1e1e" : "#ffffff"));
+        set("--gc-fg", tok(t, "foreground") || (dark ? "#e8e8e8" : "#1a1a1a"));
+        set("--gc-border", tok(t, "border") || (dark ? "#3c3c3c" : "#dcdcdc"));
+        set("--gc-muted", tok(t, "mutedForeground", "muted-foreground") || (dark ? "#a0a0a0" : "#666666"));
+        set("--gc-accent", tok(t, "primary") || "#2b6cde");
+        set("--gc-accent-fg", tok(t, "primaryForeground", "primary-foreground") || "#ffffff");
+        root.style.colorScheme = dark ? "dark" : "light";
+      };
+      const letters = (c) => { let s = ""; for (c += 1; c > 0; c = Math.floor((c - 1) / 26)) s = String.fromCharCode(65 + ((c - 1) % 26)) + s; return s; };
+      const build = () => {
+        root = document.createElement("div");
+        root.id = "gc-preview";
+        root.setAttribute("data-native-touch", "");
+        root.innerHTML =
+          '<div class="gc-bar"><select id="gc-sheets" aria-label="Sheet"></select><span class="gc-grow"></span><button id="gc-edit" type="button">Edit</button></div>' +
+          '<div id="gc-scroll"><div id="gc-sheet"><p class="gc-note">Loading\u2026</p></div><div id="gc-note" class="gc-note" hidden></div><div id="gc-sentinel"></div></div>' +
+          '<div id="gc-detail" class="gc-detail"><span class="gc-muted">Tap a cell to see its value and formula.</span></div>';
+        document.body.appendChild(root);
+        backBtn = document.createElement("button");
+        backBtn.id = "gc-back";
+        backBtn.type = "button";
+        backBtn.setAttribute("data-native-touch", "");
+        backBtn.textContent = "Preview";
+        backBtn.hidden = true;
+        document.body.appendChild(backBtn);
+        scroller = root.querySelector("#gc-scroll");
+        sheetEl = root.querySelector("#gc-sheet");
+        selectEl = root.querySelector("#gc-sheets");
+        detailEl = root.querySelector("#gc-detail");
+        noteEl = root.querySelector("#gc-note");
+        sentinel = root.querySelector("#gc-sentinel");
+        root.querySelector("#gc-edit").addEventListener("click", () => push("edit"));
+        backBtn.addEventListener("click", () => push("back"));
+        selectEl.addEventListener("change", () => { scroller.scrollTo(0, 0); selected = null; push("sheet:" + selectEl.value); });
+        sheetEl.addEventListener("click", (e) => {
+          const td = e.target.closest && e.target.closest("td");
+          if (!td) return;
+          const tr = td.parentElement;
+          if (selected) selected.classList.remove("gc-sel");
+          selected = td;
+          td.classList.add("gc-sel");
+          const address = letters(Number(td.dataset.c)) + (Number(tr.dataset.r) + 1);
+          detailEl.textContent = "";
+          const head = document.createElement("div");
+          head.className = "gc-addr";
+          head.textContent = sheetName + "!" + address;
+          const value = document.createElement("div");
+          value.textContent = td.textContent || "(empty)";
+          detailEl.append(head, value);
+          if (td.dataset.f) {
+            const f = document.createElement("code");
+            f.textContent = td.dataset.f;
+            detailEl.append(f);
+          }
+        });
+        observer = new IntersectionObserver((entries) => {
+          if (entries.some((x) => x.isIntersecting) && hasMore && !waiting) { waiting = true; push("more"); }
+        }, { root: scroller, rootMargin: "800px" });
+        observer.observe(sentinel);
+        paint();
+      };
+      if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", build); else build();
+      const viewport = () => document.getElementById("gc-viewport");
+      return {
+        // The theme travels on Band's port: in init, and in later theme messages.
+        watch(port) {
+          port.addEventListener("message", (e) => {
+            const m = e.data;
+            if (!m) return;
+            if (m.type === "init" && m.theme) { theme = m.theme; mode = m.theme.mode || ""; paint(); }
+            else if (m.type === "theme") { theme = m; mode = m.mode || ""; paint(); }
+          });
+        },
+        setWake(f) { wake = f; },
+        drain() { return events.splice(0); },
+        // Show the preview (and let the page zoom), or hide it. back is the "Preview" button over the editor.
+        show(on, back) {
+          if (!root) return;
+          root.classList.toggle("on", on);
+          backBtn.hidden = !back;
+          const v = viewport();
+          if (v) v.content = "width=device-width, initial-scale=1, " + (on ? "user-scalable=yes, maximum-scale=5" : "user-scalable=no");
+        },
+        render(html, sheets, active, more, cutCols) {
+          if (!root) return;
+          waiting = false;
+          hasMore = more;
+          const names = JSON.parse(sheets);
+          selectEl.textContent = "";
+          for (const [i, name] of names) {
+            const o = document.createElement("option");
+            o.value = i; o.textContent = name; o.selected = i === active;
+            selectEl.append(o);
+            if (i === active) sheetName = name;
+          }
+          const keepSel = selected ? [selected.parentElement.dataset.r, selected.dataset.c] : null;
+          selected = null;
+          sheetEl.innerHTML = html;
+          if (keepSel) {
+            const td = sheetEl.querySelector('tr[data-r="' + keepSel[0] + '"] td[data-c="' + keepSel[1] + '"]');
+            if (td) { td.classList.add("gc-sel"); selected = td; }
+          }
+          noteEl.hidden = !(cutCols || more);
+          noteEl.textContent = cutCols ? "Columns after the 200th are not shown." : "Loading more rows\u2026";
+          // A short first page leaves the sentinel in view, which asks for the next page.
+          if (more) { observer.unobserve(sentinel); observer.observe(sentinel); }
+        },
+      };
+    })();
   </script>
     <link data-trunk rel="rust" data-bin="gridcraft-band" data-wasm-opt="z" data-weak-refs />
   <style>
@@ -19,6 +147,36 @@
     #gridcraft_canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
     #gridcraft_loading { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
       color: #555; font: 14px system-ui, sans-serif; pointer-events: none; }
+    #gc-preview { position: fixed; inset: 0; z-index: 20; display: none; flex-direction: column; background: var(--gc-bg); color: var(--gc-fg);
+      font: 14px system-ui, sans-serif; }
+    #gc-preview.on { display: flex; }
+    #gc-preview .gc-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--gc-border); }
+    #gc-preview .gc-grow { flex: 1; }
+    #gc-preview select, #gc-preview button, #gc-back { font: inherit; min-height: 36px; border-radius: 8px; border: 1px solid var(--gc-border);
+      background: var(--gc-bg); color: var(--gc-fg); padding: 0 12px; max-width: 60vw; }
+    #gc-preview #gc-edit, #gc-back { background: var(--gc-accent); color: var(--gc-accent-fg); border-color: transparent; font-weight: 600; }
+    #gc-back { position: fixed; right: 12px; bottom: 12px; z-index: 30; min-height: 40px; box-shadow: 0 2px 8px rgba(0,0,0,.35);
+      --gc-accent: #2b6cde; --gc-accent-fg: #fff; }
+    #gc-scroll { flex: 1; overflow: auto; -webkit-overflow-scrolling: touch; touch-action: pan-x pan-y pinch-zoom; overscroll-behavior: contain; }
+    #gc-preview .gc-note { padding: 12px; color: var(--gc-muted); }
+    #gc-preview .gc-detail { border-top: 1px solid var(--gc-border); padding: 8px 12px; max-height: 28vh; overflow: auto; display: flex; flex-direction: column; gap: 2px;
+      user-select: text; -webkit-user-select: text; }
+    #gc-preview .gc-muted { color: var(--gc-muted); }
+    #gc-preview .gc-addr { color: var(--gc-muted); font-size: 12px; }
+    #gc-preview .gc-detail code { font: 12px ui-monospace, monospace; color: var(--gc-muted); overflow-wrap: anywhere; }
+    /* The sheet keeps the document's own colours: white paper, black text, unless a cell says otherwise. */
+    #gc-sheet { background: #fff; color: #000; width: max-content; min-width: 100%; }
+    .gc-t { border-collapse: separate; border-spacing: 0; table-layout: fixed; font: 14.67px Calibri, Carlito, Arial, sans-serif; user-select: text; -webkit-user-select: text; }
+    .gc-t td { padding: 1px 4px; height: 20px; box-sizing: border-box; white-space: nowrap; overflow: hidden; vertical-align: bottom;
+      border-right: 1px solid var(--gl, #d4d4d4); border-bottom: 1px solid var(--gl, #d4d4d4); }
+    .gc-t td.gc-n { text-align: right; }
+    .gc-t td.gc-c { text-align: center; }
+    .gc-t td.gc-sel { outline: 2px solid #2b6cde; outline-offset: -2px; }
+    .gc-t th { background: #f3f3f3; color: #555; font: 600 12px system-ui, sans-serif; text-align: center; padding: 2px 0; overflow: hidden;
+      border-right: 1px solid #d4d4d4; border-bottom: 1px solid #d4d4d4; }
+    .gc-t thead th { position: sticky; top: 0; z-index: 2; }
+    .gc-t tbody th { position: sticky; left: 0; z-index: 1; }
+    .gc-t thead th.gc-corner { left: 0; z-index: 3; }
   </style>
 </head>
 <body>

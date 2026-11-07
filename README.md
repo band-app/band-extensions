@@ -71,7 +71,7 @@ Band adds two optional messages to the editor protocol. The extension API stays 
 
 `crates/band-editor` does the protocol work. An app implements two optional `Editor` methods, `set_layout(Layout)` and `selection() -> Option<Selection>`, and `Bridge::sync` calls `selection()` every frame and sends only a change.
 
-While the layout is compact, the bridge also puts a touch shim in front of eframe (`crates/band-editor/src/touch.rs`). A tap reaches the app as a tap, so it selects. A one-finger drag becomes wheel events on the canvas, so it scrolls or pans and does not select. Two-finger gestures do nothing in compact mode.
+While the layout is compact, the bridge also puts a touch shim in front of eframe (`crates/band-editor/src/touch.rs`). A tap reaches the app as a tap, so it selects. A one-finger drag becomes wheel events on the canvas, so it scrolls or pans and does not select. Two-finger gestures do nothing in compact mode. The shim skips any element marked `data-native-touch`, and what is inside it, so an HTML view drawn over the canvas (a preview) keeps native scrolling, pinch zoom and taps.
 
 | Extension | Compact | Selection address | Kind |
 |---|---|---|---|
