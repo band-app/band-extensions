@@ -7,7 +7,7 @@
   "scripts": {
     "build": "node build.mjs",
     "typecheck": "node ../../scripts/check-language-server.mjs .",
-    "test": "node --test test/*.test.mjs"
+    "test": "node build.mjs && node --test test/*.test.mjs"
   },
   "dependencies": {
     "typescript": "5.9.3",
