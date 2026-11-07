@@ -43,6 +43,14 @@ export function maxBooted(): number {
   return config().maxBooted;
 }
 
+/** simctl's state names. "Shutting Down" is a transition, not "off": the device cannot be booted yet. */
+export function simState(state: string): SimDevice["state"] {
+  if (state === "Booted") return "on";
+  if (state === "Booting") return "booting";
+  if (state === "Shutting Down") return "stopping";
+  return "off";
+}
+
 const SEP = " – ";
 
 export function versionParts(v: string): number[] {
@@ -73,7 +81,7 @@ export class DeviceSet {
   private folders: Map<string, string> | null = null;
 
   private simctl(args: string[], timeoutMs?: number) {
-    return run("xcrun", ["simctl", ...args], { timeoutMs });
+    return run("xcrun", ["simctl", ...args], { timeoutMs: timeoutMs ?? 60_000 });
   }
 
   /** Every available iOS device with its iOS version. Sorted by name. */
@@ -93,7 +101,7 @@ export class DeviceSet {
           id: iosId(d.udid),
           platform: "ios",
           name: d.name,
-          state: d.state === "Booted" ? "on" : d.state === "Booting" ? "booting" : "off",
+          state: simState(d.state),
           model: modelFromType(d.deviceTypeIdentifier),
           os: `iOS ${version}`,
           owned: d.name.startsWith(owned),
@@ -149,12 +157,13 @@ export class DeviceSet {
   /** Boots a device and waits until it finished booting. */
   async boot(device: SimDevice): Promise<void> {
     const udid = udidOf(device);
-    if (device.state === "off") await this.simctl(["boot", udid]);
-    await this.simctl(["bootstatus", udid, "-b"], 5 * 60_000);
+    const limit = config().bootTimeoutMs;
+    if (device.state === "off") await this.simctl(["boot", udid], limit);
+    await this.simctl(["bootstatus", udid, "-b"], limit);
   }
 
   async shutdown(device: SimDevice): Promise<void> {
-    await this.simctl(["shutdown", udidOf(device)]).catch((err: Error) => {
+    await this.simctl(["shutdown", udidOf(device)], config().shutdownTimeoutMs).catch((err: Error) => {
       // Shutting down a device that is already off is not a failure.
       if (!/current state: Shutdown|Unable to shutdown device in current state/i.test(err.message)) {
         throw err;

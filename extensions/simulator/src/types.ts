@@ -9,7 +9,11 @@ export interface SimDevice {
   id: string;
   platform: Platform;
   name: string;
-  state: "on" | "off" | "booting";
+  /**
+   * "booting" and "stopping" are transitions: such a device neither counts toward the booted limit
+   * nor is picked to be shut down, and it cannot be streamed yet.
+   */
+  state: "on" | "off" | "booting" | "stopping";
   /** The adb serial of a running Android device, such as "emulator-5554". */
   serial?: string;
   /** The hardware model, such as "iPhone 17 Pro" or "Pixel 8", when known. */

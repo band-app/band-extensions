@@ -17,7 +17,7 @@ Band creates no device on its own. Each pane of the Simulator tab shows one devi
 
 The picker also creates devices. "New iOS simulator..." takes a model and an iOS runtime from the installed ones (`simctl create`). "New Android emulator..." takes a device profile and an installed system image (`avdmanager create avd`). When no system image is installed the form says so and prints the `sdkmanager "system-images;..."` command to run. Band never downloads one. A created device is named `<prefix> – <model>` on iOS and `<prefix>-<profile>` on Android (AVD names allow no spaces), so the prefix marks it as Band's.
 
-At most 2 iOS simulators and 2 Android emulators are on at once (`maxBooted`, `maxBootedAndroid`). Turning on a device over the limit shuts down the least recently used one first, preferring a device no pane shows. Only a device Band created or turned on itself is ever shut down this way. A device the person had already started, and any phone, stays. Stopping the service shuts down the devices Band started.
+At most 2 iOS simulators and 2 Android emulators are on at once (`maxBooted`, `maxBootedAndroid`). Turning on a device over the limit shuts down the least recently used one that no pane shows. If every device that could be shut down is shown in a pane, nothing is shut down: the pane that needed room shows an error listing the shown devices, each with a button that shuts it down and retries. A device that is booting or shutting down neither counts toward the limit nor gets picked. Only a device Band created or turned on itself is ever shut down this way. A device the person had already started, and any phone, stays. Stopping the service shuts down the devices Band started.
 
 Earlier versions made one device per worktree, named `<prefix> – <worktree id>`. Once a day and when a worktree is removed, the service deletes such a device when its worktree's folder is gone. It never deletes a device that a saved layout shows, one a pane is watching, the person's own devices, or one created in the picker.
 
@@ -32,10 +32,10 @@ The service stores the layout in `layouts.json` in its state dir, for the worktr
 Band starts a worker service with an allowlisted environment, so the `BAND_SIMULATOR_*` variables of the bundled plugin do not reach it. The service reads `<worker state dir>/extension-state/simulator/main/config.json` on every call instead:
 
 ```json
-{ "namePrefix": "Band", "maxBooted": 2, "maxBootedAndroid": 2, "androidSdk": "/path/to/Android/sdk", "serveSimEntry": "/path/to/serve-sim.js" }
+{ "namePrefix": "Band", "maxBooted": 2, "maxBootedAndroid": 2, "shutdownTimeoutMs": 60000, "bootTimeoutMs": 180000, "bootTimeoutAndroidMs": 300000, "androidSdk": "/path/to/Android/sdk", "serveSimEntry": "/path/to/serve-sim.js" }
 ```
 
-Every key is optional. The old variables still apply when the service runs outside a worker.
+Every key is optional. A shutdown that runs past `shutdownTimeoutMs`, or a boot past `bootTimeoutMs` (iOS) or `bootTimeoutAndroidMs`, is abandoned: Band kills the `simctl` call by its pid, the queue moves on, and the pane that needed it shows an error naming the device and the stuck call. Band does not restart CoreSimulatorService, because that stops every simulator on the Mac; the error says how. The old variables still apply when the service runs outside a worker.
 
 ## Tools
 

@@ -15,6 +15,12 @@ export interface SimulatorConfig {
   maxBooted?: number;
   /** The most Android emulators booted at once. Default 2. */
   maxBootedAndroid?: number;
+  /** How long a shutdown may take before Band abandons it. Default 60000 (60 s). */
+  shutdownTimeoutMs?: number;
+  /** How long an iOS boot may take before Band abandons it. Default 180000 (180 s). */
+  bootTimeoutMs?: number;
+  /** How long an Android boot may take before Band abandons it. Default 300000 (300 s). */
+  bootTimeoutAndroidMs?: number;
   /** The Android SDK folder, when ANDROID_HOME and ANDROID_SDK_ROOT are not set for the service. */
   androidSdk?: string;
   /** Another `serve-sim.js` than the one shipped in this extension. */
@@ -46,7 +52,9 @@ const text = (v: unknown): string | undefined =>
   typeof v === "string" && v.trim() !== "" ? v.trim() : undefined;
 
 /** The current settings: `config.json` first, then the environment, read on every call. */
-export function config(): Required<Pick<SimulatorConfig, "namePrefix" | "maxBooted" | "maxBootedAndroid">> &
+export function config(): Required<
+  Pick<SimulatorConfig, "namePrefix" | "maxBooted" | "maxBootedAndroid" | "shutdownTimeoutMs" | "bootTimeoutMs" | "bootTimeoutAndroidMs">
+> &
   SimulatorConfig {
   const file = fromFile();
   const env = process.env;
@@ -56,7 +64,16 @@ export function config(): Required<Pick<SimulatorConfig, "namePrefix" | "maxBoot
       : Number.isInteger(Number(fromEnv)) && Number(fromEnv) >= 1
         ? Number(fromEnv)
         : 2;
+  const duration = (fromFile: unknown, fromEnv: unknown, fallback: number): number =>
+    typeof fromFile === "number" && fromFile > 0
+      ? fromFile
+      : Number(fromEnv) > 0
+        ? Number(fromEnv)
+        : fallback;
   return {
+    shutdownTimeoutMs: duration(file.shutdownTimeoutMs, env.BAND_SIMULATOR_SHUTDOWN_TIMEOUT_MS, 60_000),
+    bootTimeoutMs: duration(file.bootTimeoutMs, env.BAND_SIMULATOR_BOOT_TIMEOUT_MS, 180_000),
+    bootTimeoutAndroidMs: duration(file.bootTimeoutAndroidMs, env.BAND_SIMULATOR_BOOT_TIMEOUT_ANDROID_MS, 300_000),
     namePrefix: text(file.namePrefix) ?? text(env.BAND_SIMULATOR_NAME_PREFIX) ?? "Band",
     maxBooted: limit(file.maxBooted, env.BAND_SIMULATOR_MAX_BOOTED),
     maxBootedAndroid: limit(file.maxBootedAndroid, env.BAND_SIMULATOR_MAX_BOOTED_ANDROID),

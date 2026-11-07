@@ -280,7 +280,8 @@ export class AndroidBackend implements Backend {
         id: avdId(name),
         platform: "android",
         name,
-        state: live ? (live.booted ? "on" : "booting") : "off",
+        // An emulator Band just spawned may not show in adb yet; it is still starting, not off.
+        state: live ? (live.booted ? "on" : "booting") : this.children.has(name) ? "booting" : "off",
         ...(live ? { serial: live.serial } : {}),
         model: info.model,
         os: info.api ? androidLabel(info.api) : "Android",
@@ -337,7 +338,8 @@ export class AndroidBackend implements Backend {
       child.on("error", (err) => (exited = err.message));
       child.unref();
       this.children.set(name, child);
-      const deadline = Date.now() + 5 * 60_000;
+      const limitMs = config().bootTimeoutAndroidMs;
+      const deadline = Date.now() + limitMs;
       for (;;) {
         if (exited) {
           const tail = (await readFile(logPath, "utf8").catch(() => "")).trim().split("\n").slice(-3).join(" ");
@@ -345,14 +347,19 @@ export class AndroidBackend implements Backend {
         }
         const live = (await this.running()).find((r) => r.avd === name);
         if (live?.booted) break;
-        if (Date.now() > deadline) throw new Error(`${name} did not finish booting in 5 minutes`);
-        await sleep(2000);
+        if (Date.now() > deadline) {
+          // Stop the emulator this call started, by its pid.
+          child.kill("SIGKILL");
+          throw new Error(`${name} did not finish booting in ${Math.round(limitMs / 1000)} s`);
+        }
+        await sleep(Math.min(2000, Math.max(50, limitMs / 10)));
       }
     } else {
-      const deadline = Date.now() + 5 * 60_000;
+      const limitMs = config().bootTimeoutAndroidMs;
+      const deadline = Date.now() + limitMs;
       while (!(await this.running()).some((r) => r.avd === name && r.booted)) {
-        if (Date.now() > deadline) throw new Error(`${name} did not finish booting in 5 minutes`);
-        await sleep(2000);
+        if (Date.now() > deadline) throw new Error(`${name} did not finish booting in ${Math.round(limitMs / 1000)} s`);
+        await sleep(Math.min(2000, Math.max(50, limitMs / 10)));
       }
     }
     return { ...device, state: "on" };
@@ -363,14 +370,21 @@ export class AndroidBackend implements Backend {
     await this.release(device);
     const name = device.id.slice("android:avd:".length);
     const live = (await this.running()).find((r) => r.avd === name);
-    if (!live) return;
+    if (!live) {
+      this.children.delete(name);
+      return;
+    }
     await this.adb(live.serial, ["emu", "kill"], 15_000).catch(() => undefined);
     const deadline = Date.now() + 30_000;
     while (Date.now() < deadline) {
-      if (!(await this.running()).some((r) => r.avd === name)) return;
+      if (!(await this.running()).some((r) => r.avd === name)) {
+        this.children.delete(name);
+        return;
+      }
       await sleep(1000);
     }
     this.children.get(name)?.kill("SIGTERM");
+    this.children.delete(name);
   }
 
   async options(): Promise<AndroidOptions> {

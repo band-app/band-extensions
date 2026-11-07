@@ -1,6 +1,6 @@
 import { setStateDir } from "./config.ts";
 import { AndroidBackend } from "./android.ts";
-import { Fleet, UnknownDevice } from "./fleet.ts";
+import { Fleet, NoRoom, UnknownDevice } from "./fleet.ts";
 import { IosBackend } from "./ios.ts";
 import { type DeviceRef, deviceIds, emptyLayout, type LayoutNode, panes } from "./layout.ts";
 import { defineWorkerService, type ServiceStream, type WorkerServiceDefinition } from "./sdk/index.mjs";
@@ -308,11 +308,9 @@ defineWorkerService(withFolders({
       void (async () => {
         try {
           stream.send(JSON.stringify({ type: "booting" }));
-          const device = await fleet.exclusive(async () =>
-            fleet.ensureOn(await fleet.find(deviceRef), (p) => {
-              if (!closed) stream.send(JSON.stringify({ type: "booting", ...p }));
-            }),
-          );
+          const device = await fleet.open(deviceRef, (p) => {
+            if (!closed) stream.send(JSON.stringify({ type: "booting", ...p }));
+          });
           view.deviceId = device.id;
           if (closed) return;
           const live = await fleet.backend(device).openStream(device, params);
@@ -327,7 +325,10 @@ defineWorkerService(withFolders({
           }
         } catch (err) {
           console.error(`simulator screen: ${err instanceof Error ? err.message : err}`);
-          if (!closed) stream.send(JSON.stringify({ type: "error", message: err instanceof Error ? err.message : String(err) }));
+          if (!closed) {
+            const message = err instanceof Error ? err.message : String(err);
+            stream.send(JSON.stringify({ type: "error", message, ...(err instanceof NoRoom ? { reason: "no-room", shown: err.shown } : {}) }));
+          }
         } finally {
           // The service ends the stream, so Band will not call onClose: the pane is gone from the registry here.
           if (!closed) {

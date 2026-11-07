@@ -1,12 +1,51 @@
+import { config } from "./config.ts";
+import { span } from "./tools.ts";
 import type { Backend, CreateSpec, OnPhase, Platform, SimDevice } from "./types.ts";
 
 export class UnknownDevice extends Error {}
 
+/** A boot or shutdown that did not finish in time and was abandoned. */
+export class LifecycleTimeout extends Error {}
+
+/**
+ * Every booted Band device is shown in a pane, so none can be shut down to make room. `shown`
+ * lists them, so the pane can offer to shut one down.
+ */
+export class NoRoom extends Error {
+  readonly shown: Array<{ id: string; name: string }>;
+  constructor(message: string, shown: Array<{ id: string; name: string }>) {
+    super(message);
+    this.shown = shown;
+  }
+}
+
+const RESTART_HINT =
+  "If it stays stuck, restart the simulator service in a terminal with: sudo killall -9 com.apple.CoreSimulator.CoreSimulatorService (this stops every simulator on the Mac).";
+
+/** Rejects with `LifecycleTimeout` when `work` does not settle within `ms`. The work is left behind. */
+function within<T>(work: Promise<T>, ms: number, message: string): Promise<T> {
+  work.catch(() => undefined);
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new LifecycleTimeout(message)), ms);
+    work.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
+}
+
 /**
  * Every device on the worker, iOS and Android, behind one set of lifecycle rules. Creating,
  * booting and shutting down never overlap (`exclusive`). Each platform has a limit of devices
- * booted at once. Booting past it shuts down the least recently used device first, and only a
- * device Band created or booted itself is ever shut down this way.
+ * booted at once. Booting past it shuts down the least recently used device that no pane shows, and
+ * only a device Band created or booted itself is ever shut down this way. A boot or shutdown that
+ * runs past its time limit is abandoned, so one stuck call cannot hold the queue.
  */
 export class Fleet {
   private chain: Promise<unknown> = Promise.resolve();
@@ -15,7 +54,7 @@ export class Fleet {
   private readonly bootedByBand = new Set<string>();
   /** Called after a device shut down, so its viewers are told and its helpers stop. */
   onShutdown: (device: SimDevice) => void = () => {};
-  /** Whether a viewer watches the device. Unwatched devices are shut down before watched ones. */
+  /** Whether a viewer shows the device. A shown device is never shut down to make room. */
   isWatched: (id: string) => boolean = () => false;
 
   readonly backends: Record<Platform, Backend>;
@@ -69,39 +108,82 @@ export class Fleet {
     return this.backends[device.platform];
   }
 
+  /**
+   * The device in a state a pane can stream. A device that is already on skips the lifecycle
+   * queue, so a stuck boot or shutdown of another device does not hold it up.
+   */
+  async open(ref: string, onPhase?: OnPhase): Promise<SimDevice> {
+    const device = await this.find(ref);
+    if (device.state === "on") {
+      this.touch(device.id);
+      return device;
+    }
+    return this.exclusive(async () => this.ensureOn(await this.find(ref), onPhase));
+  }
+
   /** Turns the device on if it is off, first making room under its platform's limit. */
   async ensureOn(device: SimDevice, onPhase?: OnPhase): Promise<SimDevice> {
     this.touch(device.id);
     const backend = this.backend(device);
     const fresh = (await backend.list()).find((d) => d.id === device.id) ?? device;
     if (fresh.state === "on") return fresh;
+    if (fresh.state === "stopping") {
+      throw new Error(`${fresh.name} is shutting down and cannot be started yet. Try again in a moment.`);
+    }
     onPhase?.({ phase: "booting", name: fresh.name, model: fresh.model });
     if (fresh.state === "off") await this.makeRoom(backend, fresh);
     const wasOff = fresh.state === "off";
-    const booted = await backend.boot(fresh, onPhase);
+    const cfg = config();
+    const limit = device.platform === "android" ? cfg.bootTimeoutAndroidMs : cfg.bootTimeoutMs;
+    const booted = await within(
+      backend.boot(fresh, onPhase),
+      limit,
+      `Booting ${fresh.name} did not finish in ${span(limit)} and was abandoned. ${
+        device.platform === "ios" ? RESTART_HINT : "Close the emulator and try again."
+      }`,
+    );
     if (wasOff) this.bootedByBand.add(device.id);
     return booted;
   }
 
-  /** Shuts down devices of the platform until booting one more fits under the limit. */
+  /**
+   * Shuts down devices of the platform until booting one more fits under the limit. A device that
+   * is booting or shutting down neither counts nor gets picked. A device a pane shows is never
+   * picked: when only shown devices are left to free, this throws `NoRoom`.
+   */
   private async makeRoom(backend: Backend, incoming: SimDevice): Promise<void> {
     const on = (await backend.list()).filter(
       (d) =>
-        d.state !== "off" &&
+        d.state === "on" &&
         d.id !== incoming.id &&
         // Only Band's own devices, or ones Band booted. A phone or an emulator the person runs stays.
         (d.owned || this.bootedByBand.has(d.id)) &&
         !d.id.startsWith("android:serial:"),
     );
-    const rank = (d: SimDevice) => [this.isWatched(d.id) ? 1 : 0, this.lastUsed.get(d.id) ?? 0] as const;
-    on.sort((a, b) => rank(a)[0] - rank(b)[0] || rank(a)[1] - rank(b)[1]);
     const keep = Math.max(0, backend.maxBooted() - 1);
-    for (const victim of on.slice(0, Math.max(0, on.length - keep))) await this.turnOff(victim);
+    const excess = on.length - keep;
+    if (excess <= 0) return;
+    const free = on.filter((d) => !this.isWatched(d.id)).sort((a, b) => (this.lastUsed.get(a.id) ?? 0) - (this.lastUsed.get(b.id) ?? 0));
+    if (free.length < excess) {
+      const shown = on.filter((d) => this.isWatched(d.id)).map((d) => ({ id: d.id, name: d.name }));
+      throw new NoRoom(
+        `${incoming.name} cannot start: ${backend.maxBooted()} ${backend.platform === "ios" ? "iOS simulators" : "Android emulators"} are on and ${shown.map((d) => d.name).join(", ")} ${shown.length === 1 ? "is" : "are"} shown in a pane. Shut one down to make room.`,
+        shown,
+      );
+    }
+    for (const victim of free.slice(0, excess)) await this.turnOff(victim);
   }
 
   /** Shuts a device down. Used for the person's Power press as well, on any device they can see. */
   async turnOff(device: SimDevice): Promise<void> {
-    await this.backend(device).shutdown(device);
+    const limit = config().shutdownTimeoutMs;
+    await within(
+      this.backend(device).shutdown(device),
+      limit,
+      `Shutting down ${device.name} did not finish in ${span(limit)} and was abandoned (the ${device.platform === "ios" ? "simctl shutdown" : "emulator kill"} call is stuck). ${
+        device.platform === "ios" ? RESTART_HINT : "Close the emulator by hand."
+      }`,
+    );
     this.bootedByBand.delete(device.id);
     this.onShutdown(device);
   }
