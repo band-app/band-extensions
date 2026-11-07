@@ -26,16 +26,23 @@ if [ -f "$src/apps/worker/src/bundled-worker-plugins.ts" ] && grep -q plugin-sim
   exit 1
 fi
 
+# Devices go to the account's default set whatever HOME a test sets, so the tests name theirs
+# `band-test-<time>-<pid>` and delete them at the end. This sweep also removes a crashed run's
+# leftovers (older than 3 hours) when the script exits. It never touches another name.
+trap 'node "$root/scripts/sweep-test-simulators.mjs" >&2 || true' EXIT
+prefix_from_caller="${BAND_SIMULATOR_NAME_PREFIX:-}"
+
 # Test hubs and workers run with a temp HOME and no BAND_* variable from the Band worker this may run in.
 for v in $(env | sed -n 's/^\(BAND_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$v"; done
+export BAND_SIMULATOR_NAME_PREFIX="${prefix_from_caller:-band-test-$(node -p 'Math.floor(Date.now()/1000).toString(36)')-$$}"
 
 if [ "$which" = hub ] || [ "$which" = all ]; then
   cp "$here/simulator-extension.test.ts" "$src/apps/hub/tests/simulator-extension.test.ts"
-  trap 'rm -f "$src/apps/hub/tests/simulator-extension.test.ts" "$src/apps/web/e2e/simulator-extension-panel.spec.ts"' EXIT
+  trap 'rm -f "$src/apps/hub/tests/simulator-extension.test.ts" "$src/apps/web/e2e/simulator-extension-panel.spec.ts"; node "$root/scripts/sweep-test-simulators.mjs" >&2 || true' EXIT
   (cd "$src/apps/hub" && pnpm exec vitest run tests/simulator-extension.test.ts)
 fi
 if [ "$which" = e2e ] || [ "$which" = all ]; then
   cp "$here/simulator-extension-panel.spec.ts" "$src/apps/web/e2e/simulator-extension-panel.spec.ts"
-  trap 'rm -f "$src/apps/hub/tests/simulator-extension.test.ts" "$src/apps/web/e2e/simulator-extension-panel.spec.ts"' EXIT
+  trap 'rm -f "$src/apps/hub/tests/simulator-extension.test.ts" "$src/apps/web/e2e/simulator-extension-panel.spec.ts"; node "$root/scripts/sweep-test-simulators.mjs" >&2 || true' EXIT
   (cd "$src/apps/web" && pnpm exec playwright test e2e/simulator-extension-panel.spec.ts --project=chromium)
 fi
