@@ -83,12 +83,16 @@
     $("error-btn").setAttribute("aria-expanded", String(open));
   }
 
-  // The theme: Band's tokens set the panel's variables. Without a theme the page keeps the colors
+  // The theme: Band's tokens set the panel's variables, from init.theme and from each later "theme" message (the same shape). Without a theme the page keeps the colors
   // of its stylesheet.
   function applyTheme(theme) {
     const { vars, scheme } = Shell.themeVars(theme);
     const root = document.documentElement;
-    for (const [name, value] of Object.entries(vars)) root.style.setProperty(name, value);
+    // A token the new theme lacks goes back to the stylesheet's color instead of keeping the old one.
+    for (const name of Shell.themeVarNames) {
+      if (name in vars) root.style.setProperty(name, vars[name]);
+      else root.style.removeProperty(name);
+    }
     if (scheme) root.style.colorScheme = scheme;
   }
 

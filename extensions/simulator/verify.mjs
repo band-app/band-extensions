@@ -51,6 +51,7 @@ async function jpeg(w, h) {
   x.fillStyle = "#fff"; x.fillRect(w / 2 - 20, h / 2 - 20, 40, 40);
   return new Uint8Array(await (await c.convertToBlob({ type: "image/jpeg" })).arrayBuffer());
 }
+window.sendTheme = (t) => port.postMessage({ type: "theme", ...t });
 window.frame = (theme) => {
   document.querySelectorAll("iframe").forEach((f) => f.remove());
   window.log = [];
@@ -159,6 +160,24 @@ for (const [name, theme] of [["dark", DARK], ["light", LIGHT]]) {
   check(`S3 ${name} button hover`, (await css(f, "#rotate", "backgroundColor")) === rgb(t["--accent"]), await css(f, "#rotate", "backgroundColor"));
   await tab.screenshot({ path: join(out, `s3-${name}.png`) });
 }
+
+// S3 live: a "theme" message re-applies the tokens, and a token the new theme lacks falls back.
+await tab.evaluate(([t]) => window.frame(t), [DARK]);
+f = await panel();
+await sleep(600);
+await tab.evaluate(([t]) => window.sendTheme(t), [LIGHT]);
+await sleep(200);
+check("S3 live theme message: background", (await css(f, "body", "backgroundColor")) === rgb(LIGHT.tokens["--background"]), await css(f, "body", "backgroundColor"));
+check("S3 live theme message: color-scheme", (await css(f, "html", "colorScheme")) === "light");
+await tab.evaluate(() => window.sendTheme({ mode: "dark", tokens: { background: "#000000" } }));
+await sleep(200);
+check("S3 live theme: new token applies", (await css(f, "body", "backgroundColor")) === "rgb(0, 0, 0)");
+check("S3 live theme: missing token falls back", (await css(f, "#rotate", "color")) !== rgb(LIGHT.tokens["--foreground"]));
+await tab.screenshot({ path: join(out, "s3-live-theme.png") });
+await tab.evaluate(([t]) => window.frame(undefined), [DARK]);
+f = await panel();
+await sleep(600);
+check("S3 init without a theme still works", (await f.evaluate(() => document.body.dataset.phase)) === "live");
 
 // S1: a tap on the screen reaches the device at the same fraction, inside the shell.
 await tab.evaluate(([t]) => window.frame(t), [DARK]);

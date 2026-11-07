@@ -105,6 +105,7 @@
     return out;
   }
 
-  const api = { DEFAULT_SCREEN, layout, bootText, themeVars, pickerGroups };
+  const themeVarNames = Object.keys(TOKEN_VARS);
+  const api = { DEFAULT_SCREEN, layout, bootText, themeVars, themeVarNames, pickerGroups };
   if (typeof globalThis !== "undefined") globalThis.BandSimShell = api;
 })();
