@@ -79,6 +79,31 @@ class PortChannel {
   }
 }
 
+/**
+ * Band's theme: `init.theme` and later `theme` messages are `{ mode, tokens }`, tokens being Band's
+ * CSS color values by name. They replace the panel's own colors. With no theme (or a missing token)
+ * the colors from panel.html stay.
+ */
+const THEME_MAP = {
+  background: "--bg",
+  foreground: "--fg",
+  "muted-foreground": "--muted",
+  border: "--border",
+  accent: "--accent",
+  destructive: "--danger",
+};
+function applyTheme(theme) {
+  if (!theme || typeof theme !== "object") return;
+  const root = document.documentElement.style;
+  if (theme.mode === "dark" || theme.mode === "light") root.setProperty("color-scheme", theme.mode);
+  const tokens = theme.tokens && typeof theme.tokens === "object" ? theme.tokens : {};
+  for (const [name, variable] of Object.entries(THEME_MAP)) {
+    const value = tokens[name];
+    if (typeof value === "string" && value.trim() !== "" && !/[;{}]/.test(value)) root.setProperty(variable, value);
+    else root.removeProperty(variable);
+  }
+}
+
 function setPhase(phase, text) {
   document.body.dataset.phase = phase;
   const labels = { connecting: "Connecting", live: control ? "In control" : "View only", closed: "Disconnected" };
@@ -213,6 +238,7 @@ function onMessage(m) {
     case "init":
       visible = m.visible !== false;
       document.body.dataset.layout = m.layout === "compact" ? "compact" : "regular";
+      applyTheme(m.theme);
       port.postMessage({ type: "ready" });
       openStream();
       break;
@@ -252,6 +278,9 @@ function onMessage(m) {
         else rfb.blur();
         applyScale();
       }
+      break;
+    case "theme":
+      applyTheme(m);
       break;
     case "layout":
       document.body.dataset.layout = m.layout === "compact" ? "compact" : "regular";

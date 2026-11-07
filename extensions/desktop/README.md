@@ -18,7 +18,7 @@ On first need (the Desktop tab opens, a tool is called, or the worker starts an 
 
 Before the worker starts an agent or a terminal in the worktree, it asks the service for the worktree's environment (the manifest lists `worktreeEnv: ["DISPLAY"]`), so everything the agent starts draws on that display. Two worktrees on one worker have two displays.
 
-The panel is noVNC in the extension's iframe, with Fit and 1:1, fullscreen, up to three reconnects, clipboard paste and keyboard focus only while in control, and a compact layout on phones. The manifest sets `defaultControl`, so input works without pressing Take control. Pressing Release in Band's toolbar makes the stream view-only: the hub drops what the page sends, so the picture stops updating until control comes back, when the page reconnects. Any number of viewers may open the tab at once.
+The panel is noVNC in the extension's iframe, coloured from the theme Band sends (`init.theme` and `theme` messages, with built-in fallbacks), with Fit and 1:1, fullscreen, up to three reconnects, clipboard paste and keyboard focus only while in control, and a compact layout on phones. The manifest sets `defaultControl`, so input works without pressing Take control. Pressing Release in Band's toolbar makes the stream view-only: the hub drops what the page sends, so the picture stops updating until control comes back, when the page reconnects. Any number of viewers may open the tab at once.
 
 ## Stopping
 
