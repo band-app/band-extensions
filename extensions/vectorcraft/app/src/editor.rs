@@ -16,6 +16,7 @@ use serde_json::json;
 use vectorcraft_ui_egui::Services;
 use vectorcraft_ui_egui::VectorcraftApp;
 
+use crate::preview::Preview;
 use crate::web::Inbox;
 
 /// The app, shared by the frame loop, this editor and the MCP server. `None` while the app moves
@@ -59,7 +60,9 @@ pub struct VectorcraftEditor {
     /// The file's name as Band gave it.
     name: RefCell<String>,
     /// The document Band's file is open in.
-    uid: Cell<Option<u64>>,
+    uid: Rc<Cell<Option<u64>>>,
+    /// The compact layout's preview, when the page could build it.
+    preview: Option<Preview>,
     /// The document as of the last time Band had the file: when it opened, and each `saved`. VectorCraft
     /// marks a document saved as soon as its download service accepts the bytes, so this puts the
     /// mark back until Band confirms.
@@ -76,13 +79,16 @@ const TOUCH_WORKSPACE: &str = "Touch";
 
 impl VectorcraftEditor {
     pub fn new(app: SharedApp, inbox: Inbox, ctx: egui::Context, hook: Rc<SaveHook>) -> Self {
+        let uid = Rc::new(Cell::new(None));
+        let preview = Preview::new(app.clone(), uid.clone(), ctx.clone());
         Self {
+            preview,
             app,
             inbox,
             ctx,
             hook,
             name: RefCell::new(String::new()),
-            uid: Cell::new(None),
+            uid,
             baseline: RefCell::new(None),
             sent: VecDeque::new(),
             regular_workspace: None,
@@ -100,8 +106,17 @@ impl VectorcraftEditor {
         if self.uid.get().is_some() || !self.inbox.lock().unwrap_or_else(|e| e.into_inner()).is_empty() {
             return;
         }
-        let Ok(mut guard) = self.app.try_borrow_mut() else { return };
-        let Some(app) = guard.as_mut() else { return };
+        let adopted = self.adopt_active();
+        // The first look at a document opened in the compact layout.
+        if adopted && let Some(preview) = &self.preview {
+            preview.refresh();
+        }
+    }
+
+    /// True when the active document is now the one Band's file is open in.
+    fn adopt_active(&self) -> bool {
+        let Ok(mut guard) = self.app.try_borrow_mut() else { return false };
+        let Some(app) = guard.as_mut() else { return false };
         if let Some(doc) = app.session.active_mut() {
             doc.path = Some(self.name.borrow().clone());
             // Save writes the format of the file, not the native one a document opened from bytes has.
@@ -112,7 +127,9 @@ impl VectorcraftEditor {
             };
             *self.baseline.borrow_mut() = Some(doc.doc.clone());
             self.uid.set(Some(doc.uid));
+            return true;
         }
+        false
     }
 }
 
@@ -122,6 +139,9 @@ impl Editor for VectorcraftEditor {
         *self.hook.ext.borrow_mut() = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
         *self.name.borrow_mut() = name.to_string();
         self.uid.set(None);
+        if let Some(preview) = &self.preview {
+            preview.set_title(name);
+        }
         self.push_to_inbox(name.to_string(), bytes);
     }
 
@@ -208,7 +228,16 @@ impl Editor for VectorcraftEditor {
         }
     }
 
+    fn set_theme(&mut self, mode: &str, tokens: &serde_json::Value) {
+        if let Some(preview) = &self.preview {
+            preview.set_theme(mode, tokens);
+        }
+    }
+
     fn set_layout(&mut self, layout: Layout) {
+        if let Some(preview) = &self.preview {
+            preview.set_compact(layout.is_compact());
+        }
         let Ok(mut guard) = self.app.try_borrow_mut() else { return };
         let Some(app) = guard.as_mut() else { return };
         if layout.is_compact() {
@@ -229,6 +258,11 @@ impl Editor for VectorcraftEditor {
     /// The first selected object, addressed by its node id: the `id` VectorCraft's control channel
     /// (`window.vectorcraft.execute`) and engine commands take. The web build lists no MCP tools.
     fn selection(&mut self) -> Option<Selection> {
+        // The preview reports no selection: a tap there selects nothing. The editor's selection
+        // underneath is not what the person is looking at.
+        if self.preview.as_ref().is_some_and(Preview::showing) {
+            return None;
+        }
         let uid = self.uid.get()?;
         let guard = self.app.try_borrow().ok()?;
         let app = guard.as_ref()?;

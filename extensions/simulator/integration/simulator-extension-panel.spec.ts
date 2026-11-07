@@ -8,7 +8,6 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,12 +28,15 @@ import { ExtensionPanelPage } from "./pages/ExtensionPanelPage";
 
 test.use({ viewport: { width: 1440, height: 900 } });
 test.describe.configure({ mode: "serial" });
+// Skipped: written for one auto-created device per worktree and the old Take control step. Both are gone, so
+// it needs a rewrite for the canvas (per-pane pickers and streams) before it runs again.
+test.skip(true, "superseded by the canvas; see verify.mjs for the panel check");
 
 const TARBALL = process.env.SIM_EXT_TARBALL ?? "";
 const SHOTS = process.env.SIM_EXT_SHOTS ?? tmpdir();
 const TOKEN = "e2e-simulator-extension-token";
 const REPO = "simrepo";
-const PREFIX = `Band simext e2e ${randomBytes(4).toString("hex")}`;
+const PREFIX = `band-test-${Math.floor(Date.now() / 1000).toString(36)}-${process.pid}`;
 const SEP = "–";
 
 let server: ServerHandle;

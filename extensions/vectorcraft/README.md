@@ -67,6 +67,18 @@ Data Recovery is gone: it kept copies in browser storage and Web Locks, which a 
 
 Release build, rev `1008166fa7c6`: wasm 83.5 MB raw, about 29 MB gzip -9 (the tarball is 75 MB with the `.gz` and `.br` copies). From `band:hello` to `ready` takes 0.4 s once the wasm is cached by the test server. A cold release build takes about 12 minutes on Apple silicon.
 
+## Compact preview
+
+When Band sends `layout: "compact"`, the page opens on a preview instead of the egui editor (`app/src/preview.rs`). The regular layout is unchanged.
+
+- The preview is HTML over the canvas. `vectorcraft_svg::export` writes the document the editor holds (text as paths, hidden layers left out, `responsive` so it fits the width) and the SVG goes into an `<img>` as a `data:` URI. No script in the drawing runs, nothing is fetched and no permission is added.
+- One finger scrolls with the browser's own scrolling. A two-finger pinch is page script (1x to 8x, about the midpoint), because the page's viewport forbids browser zoom and the editor needs those gestures.
+- Edit hides the overlay and shows a Preview pill. The canvas keeps running underneath, so the document, its unsaved edits and the dirty state stay as they were. The pill and a `reload` both rebuild the SVG from the current document. Saving is unchanged: `requestSave` and File > Save go through the same hook.
+- The bar, the well around the page and the buttons follow Band's `theme` (`background`, `foreground`, `border`, `muted`, `primary`, `primary-foreground`, with fallbacks by mode). The page is white, because a drawing is drawn for white.
+- The preview reports no selection. A tap there selects nothing.
+- The browser rasterizes the whole SVG at once. There is no lazy rendering: the engine writes one SVG per document.
+- Shared crate change: the touch shim leaves touches that start inside an element with `data-band-native`.
+
 ## Compact layout and selection
 
 `VectorcraftEditor::set_layout` switches to VectorCraft's own Touch workspace (`window.workspace`) and switches back to the previous workspace on `regular`. `selection` reports the first selected object by node id. The web build has no MCP tools, so `verify.mjs` checks the id against `document.inspect` on the control channel. The protocol is described in the [root README](../../README.md#compact-layout-and-selection), and `verify.mjs` runs the shared scenarios from `scripts/verify-compact.mjs`.

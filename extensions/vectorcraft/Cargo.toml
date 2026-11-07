@@ -16,6 +16,7 @@ band-editor = { path = "../../crates/band-editor" }
 vectorcraft-doc = { git = "https://github.com/storytold/vectorcraft.git", rev = "1008166fa7c6" }
 vectorcraft-engine = { git = "https://github.com/storytold/vectorcraft.git", rev = "1008166fa7c6", default-features = false, features = ["bundled-fonts"] }
 vectorcraft-format = { git = "https://github.com/storytold/vectorcraft.git", rev = "1008166fa7c6" }
+vectorcraft-svg = { git = "https://github.com/storytold/vectorcraft.git", rev = "1008166fa7c6" }
 vectorcraft-text = { git = "https://github.com/storytold/vectorcraft.git", rev = "1008166fa7c6", default-features = false }
 vectorcraft-ui-egui = { git = "https://github.com/storytold/vectorcraft.git", rev = "1008166fa7c6" }
 # These must resolve to the versions VectorCraft's own Cargo.lock uses at that rev.

@@ -1,14 +1,17 @@
 {
   "id": "simulator",
-  "name": "iOS Simulator",
-  "version": "0.3.0",
+  "name": "Simulator",
+  "version": "0.6.0",
   "extensionApi": 1,
   "contributes": {
     "workerServices": [
       {
         "id": "main",
         "entry": "service.mjs",
-        "requires": ["os=darwin", "xcrun"],
+        "requires": [
+          "os=darwin",
+          "xcrun"
+        ],
         "capability": "simulator"
       }
     ],
@@ -23,93 +26,47 @@
     ],
     "tools": [
       {
+        "name": "devices",
+        "description": "List every iOS simulator and Android emulator on this worktree's worker with its id, OS, model and whether it is on, and which one the Simulator tab has focused. Band creates no device on its own.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        },
+        "service": "main",
+        "method": "list"
+      },
+      {
         "name": "status",
-        "description": "Show this worktree's iOS simulator: its device id, whether it is booted, and its screen size in points. Each worktree has its own device on its worker (a Mac). The device boots on the first screenshot, tap or other action.",
+        "description": "Show one device's id, platform, whether it is on and its screen size. Android sizes are pixels, iOS sizes are points. Acts on the device named by `device`, else on the device in the last focused pane of the Simulator tab; with neither, answers with the list of devices. Turns nothing on.",
         "service": "main",
-        "method": "status"
-      },
-      {
-        "name": "screenshot",
-        "description": "Take a screenshot of this worktree's iOS simulator, booting it first when it is off. Answers with the image and a line with its pixel size and the scale. Coordinates for simulator_tap are in points: pixels divided by scale.",
-        "service": "main",
-        "method": "screenshot"
-      },
-      {
-        "name": "describe",
-        "description": "Read the iOS simulator screen's accessibility tree: each element's type, label, value and id, its frame and the point to tap it at. Cheaper and more exact than reading a screenshot. Coordinates are in points.",
-        "service": "main",
-        "method": "describe"
-      },
-      {
-        "name": "tap",
-        "description": "Tap the iOS simulator screen. Coordinates are in points, not screenshot pixels: divide pixels by the scale that simulator_screenshot reports (3 on current iPhones).",
+        "method": "status",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "x": { "type": "number", "description": "Horizontal position in points" },
-            "y": { "type": "number", "description": "Vertical position in points" }
-          },
-          "required": ["x", "y"]
-        },
-        "service": "main",
-        "method": "tap"
+            "device": {
+              "type": "string",
+              "description": "Device id or name from simulator_devices. Without it the tool acts on the device in the pane of the Simulator tab that was focused last."
+            }
+          }
+        }
       },
       {
-        "name": "type",
-        "description": "Type text into the focused field of the iOS simulator.",
-        "inputSchema": {
-          "type": "object",
-          "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 10000 } },
-          "required": ["text"]
-        },
-        "service": "main",
-        "method": "type"
-      },
-      {
-        "name": "button",
-        "description": "Press a hardware button on the iOS simulator.",
-        "inputSchema": {
-          "type": "object",
-          "properties": { "button": { "type": "string", "enum": ["HOME", "LOCK", "SIDE_BUTTON", "SIRI"] } },
-          "required": ["button"]
-        },
-        "service": "main",
-        "method": "button"
-      },
-      {
-        "name": "open_url",
-        "description": "Open a URL in the iOS simulator. A web URL opens Safari, a custom scheme opens the app that registered it.",
-        "inputSchema": {
-          "type": "object",
-          "properties": { "url": { "type": "string", "minLength": 1 } },
-          "required": ["url"]
-        },
-        "service": "main",
-        "method": "openUrl"
-      },
-      {
-        "name": "install",
-        "description": "Install an .app folder from this worktree (a simulator build) on the iOS simulator.",
+        "name": "show",
+        "description": "Show a simulator or emulator in this worktree's Simulator tab. Run your app with your own tools (xcrun simctl, xcodebuild, expo, adb, Maestro). After you boot a simulator or emulator, or install or launch an app on one, call simulator_show with its UDID or adb serial so the person sees the device you used. Find the id with `xcrun simctl list devices booted` or `adb devices`, or from simulator_devices. From a shell: `band tools call simulator_show --json '{\"device\":\"<id>\"}'`. The device goes in the pane focused last (else the first pane), and an open tab switches to it without a reload. The answer says which pane. An unknown device is an error that lists the devices.",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "path": { "type": "string", "minLength": 1, "description": "Absolute path of the .app inside this worktree" }
+            "device": {
+              "type": "string",
+              "description": "Device id (iOS UDID, Android adb serial like emulator-5554, or an id from simulator_devices) or its name."
+            }
           },
-          "required": ["path"]
+          "required": [
+            "device"
+          ]
         },
         "service": "main",
-        "method": "install"
-      },
-      {
-        "name": "launch",
-        "description": "Launch an installed app on the iOS simulator by bundle id.",
-        "inputSchema": {
-          "type": "object",
-          "properties": { "bundleId": { "type": "string", "minLength": 1 } },
-          "required": ["bundleId"]
-        },
-        "service": "main",
-        "method": "launch"
+        "method": "show"
       }
     ]
   }

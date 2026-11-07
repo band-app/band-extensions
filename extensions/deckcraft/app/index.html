@@ -58,7 +58,7 @@
 </head>
 <body>
   <canvas id="deckcraft_canvas"></canvas>
-  <div id="bp" data-native-touch hidden>
+  <div id="bp" data-band-native hidden>
     <div id="bp-bar">
       <span id="bp-count" aria-live="polite"></span>
       <button id="bp-notes-btn" type="button" aria-pressed="false">Notes</button>
@@ -71,7 +71,7 @@
       <button id="bp-next" type="button" aria-label="Next slide">&#8250;</button>
     </div>
   </div>
-  <button id="bp-back" type="button" data-native-touch hidden>Preview</button>
+  <button id="bp-back" type="button" data-band-native hidden>Preview</button>
   <script>
     // The preview. The Rust side (src/preview.rs) calls this object; it holds no document, only slide
     // pictures the engine rendered, so it stays plain DOM: native scrolling, selection and layout.

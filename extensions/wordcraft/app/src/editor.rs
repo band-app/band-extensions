@@ -17,6 +17,7 @@ use wordcraft_ui_egui::control::ControlRequest;
 use wordcraft_ui_egui::{Inbox, Services, WordApp};
 
 use crate::mcp::McpHost;
+use crate::preview::{Click, Preview, View};
 
 /// What `route_save` shares with the editor.
 pub struct SaveRoute {
@@ -38,6 +39,14 @@ pub struct WordcraftEditor {
     sent: VecDeque<u64>,
     /// The interface as it was before the compact layout, restored by the regular one.
     regular_ui: Option<RegularUi>,
+    /// The compact layout's reading view; `None` when the page lacks its markup.
+    preview: Option<Preview>,
+    /// Band asked for the compact layout.
+    compact: bool,
+    /// What a compact page shows: the reading view first, the editor after Edit.
+    view: View,
+    /// The reading view must be rebuilt from the document.
+    stale: bool,
 }
 
 /// The interface settings the compact layout changes.
@@ -83,7 +92,47 @@ impl WordcraftEditor {
 
     pub fn new(app: Rc<RefCell<WordApp>>, inbox: Inbox, ctx: egui::Context, route: SaveRoute, control: Sender<ControlRequest>) -> Self {
         let mcp = McpHost::new(app.clone(), ctx.clone(), control);
-        Self { app, inbox, ctx, mcp, name: "Document.docx".to_string(), route, sent: VecDeque::new(), regular_ui: None }
+        let repaint_ctx = ctx.clone();
+        let preview = Preview::install(move || repaint_ctx.request_repaint());
+        Self {
+            app,
+            inbox,
+            ctx,
+            mcp,
+            name: "Document.docx".to_string(),
+            route,
+            sent: VecDeque::new(),
+            regular_ui: None,
+            preview,
+            compact: false,
+            view: View::Edit,
+            stale: false,
+        }
+    }
+
+    /// Runs once per frame before the bridge: handles the Edit and back buttons and rebuilds the
+    /// reading view when the document may have changed.
+    pub fn frame(&mut self) {
+        let open = self.is_open();
+        let Some(preview) = &mut self.preview else { return };
+        match preview.take_click() {
+            Some(Click::Edit) => self.view = View::Edit,
+            Some(Click::Back) => {
+                self.view = View::Preview;
+                self.stale = true;
+            }
+            None => {}
+        }
+        preview.set_mode(self.compact, self.view);
+        if !(self.compact && self.view == View::Preview && self.stale && open) {
+            return;
+        }
+        // A busy app (it is drawing) is tried again on the next frame.
+        let Ok(app) = self.app.try_borrow() else { return };
+        let html = wordcraft_formats::html::export_fragment(&app.session.doc);
+        drop(app);
+        preview.show(&self.name, &html);
+        self.stale = false;
     }
 
     fn push_to_inbox(&self, name: String, bytes: Vec<u8>) {
@@ -111,6 +160,7 @@ impl Editor for WordcraftEditor {
         self.name = if name.is_empty() { "Document.docx".to_string() } else { name.to_string() };
         let ext = extension(&self.name);
         *self.route.format.borrow_mut() = if ext.is_empty() { "docx".to_string() } else { ext };
+        self.stale = true;
         self.push_to_inbox(self.name.clone(), bytes);
     }
 
@@ -127,6 +177,7 @@ impl Editor for WordcraftEditor {
         }
         // A `saved` that arrives after this reload belongs to the old document; drop the snapshots.
         self.sent.clear();
+        self.stale = true;
         self.push_to_inbox(self.name.clone(), bytes);
     }
 
@@ -157,10 +208,24 @@ impl Editor for WordcraftEditor {
     }
 
     fn mcp(&mut self, requests: Vec<String>) -> Vec<String> {
+        // A tool call may edit the document; the reading view catches up on the next frame.
+        if requests.iter().any(|r| r.contains("\"tools/call\"")) {
+            self.stale = true;
+            self.ctx.request_repaint();
+        }
         self.mcp.frame(&self.ctx, requests)
     }
 
     fn set_layout(&mut self, layout: Layout) {
+        // Compact starts on the reading view. A repeated `compact` leaves a person in the editor.
+        if layout.is_compact() && !self.compact {
+            self.view = View::Preview;
+            self.stale = true;
+        }
+        self.compact = layout.is_compact();
+        if let Some(preview) = &mut self.preview {
+            preview.set_mode(self.compact, self.view);
+        }
         let Ok(mut app) = self.app.try_borrow_mut() else { return };
         if layout.is_compact() {
             if self.regular_ui.is_none() {
@@ -190,7 +255,13 @@ impl Editor for WordcraftEditor {
     /// agent restores it with `execute select.range <address>`, after which `type_text` replaces it
     /// and `execute` formatting commands act on it. A caret with nothing selected is a `paragraph`
     /// (`select.paragraph` selects the paragraph around it); selected text is `text`.
+    ///
+    /// The reading view reports no selection: while it is showing, the editor's selection is not
+    /// what the person sees, and reflowed text has no address `select.range` could take.
     fn selection(&mut self) -> Option<Selection> {
+        if self.compact && self.view == View::Preview && self.preview.is_some() {
+            return None;
+        }
         let app = self.app.try_borrow().ok()?;
         let session = &app.session;
         if session.documents().is_empty() {

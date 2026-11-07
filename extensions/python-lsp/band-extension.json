@@ -1,0 +1,19 @@
+{
+  "id": "python-lsp",
+  "name": "Python language server (Pyright)",
+  "version": "0.1.0",
+  "extensionApi": 1,
+  "contributes": {
+    "languageServers": [
+      {
+        "id": "python",
+        "languages": ["python"],
+        "files": ["*.py", "*.pyi"],
+        "command": "node_modules/pyright/langserver.index.js",
+        "args": ["--stdio"],
+        "rootMarkers": ["pyproject.toml", "setup.py", "requirements.txt", ".git"],
+        "requires": ["node"]
+      }
+    ]
+  }
+}

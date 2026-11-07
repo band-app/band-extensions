@@ -65,3 +65,15 @@ WordCraft's official builds embed translations and proofing data from `storytold
 ## Compact layout and selection
 
 `WordcraftEditor::set_layout` collapses the ribbon, hides the quick access toolbar and navigation pane and sets the interface to 125%. `selection` reports `session.sel` as JSON (`{"anchor": Pos, "focus": Pos}`), which is the parameter object of `execute select.range`. A caret is a `paragraph` selection with no text, and selected text is a `text` selection. The protocol is described in the [root README](../../README.md#compact-layout-and-selection), and `verify.mjs` runs the shared scenarios from `scripts/verify-compact.mjs`.
+
+## Reading view in the compact layout
+
+A compact page opens a reading view first, not the egui editor. `app/src/preview.rs` fills `#wc_doc` in `app/index.html` with the engine's own HTML export (`wordcraft_formats::html::export_fragment`), so text reflows to the screen and the browser scrolls, pinch zooms and selects it. The Edit button switches to the editor, and the bar above the editor switches back. A regular page is unchanged.
+
+- Reflow only. There is no page-image fallback. The export has no headers, footers, floating shapes, text boxes or comments, and the editor shows them. Page images would also be fixed-width and not selectable.
+- The view rebuilds on entering it, after `open` and `reload`, and after any `tools/call` an agent makes. It skips the DOM write when the HTML is unchanged, so the scroll position stays.
+- Large documents: the export is one string built at once. Each top-level block uses `content-visibility: auto` and pictures use `loading="lazy"`, so the browser skips layout and decoding off screen. The export itself is not incremental.
+- Theme: the bar and background use Band's `theme` tokens as `--band-<token>` variables, read from the port by a listener in `index.html`. The document sits on a white sheet and keeps its own colors.
+- Touch: a capture listener in `index.html` runs before the shared touch shim and stops touches that start in the reading view or its bars, so the shim leaves them to the browser. Links in the document never navigate the frame. `#` links scroll.
+- Selection: the reading view reports no selection (`null`). Reflowed text has no address that `select.range` takes.
+- State: the app is never closed, so unsaved edits and the dirty state survive Edit and back. Save still goes only through the editor path.

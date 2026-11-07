@@ -70,6 +70,6 @@ In the compact layout the extension opens a preview first and shows the egui edi
 - The preview reports no `selection`. A picture has no shapes to address, so while the preview is up the extension sends `null`, and the editor's selection returns when Edit is pressed.
 - While the preview is up it swallows key events, so an arrow key pages through slides and never nudges a shape in the editor behind it.
 
-One shared change: the touch shim in `crates/band-editor` swallowed every touch in compact mode and replayed it on the canvas, which would have killed taps and scrolling on the preview. It now leaves a touch alone when it starts on, or inside, an element marked `data-native-touch`, and the preview's root and the Preview pill carry that attribute. Elements without it behave as before.
+The touch shim in `crates/band-editor` swallows every touch in compact mode and replays it on the canvas, which would break taps and scrolling on the preview. It leaves a touch alone when it starts inside an element marked `data-band-native`, and the preview's root and the Preview pill carry that attribute.
 
 `verify.mjs` covers the preview with real touch input (swipe, pinch, Edit and Notes). The next button and the Preview pill get a `click` event instead of a tap, because headless Chrome drops pointer input to this framed page below about y=750.
