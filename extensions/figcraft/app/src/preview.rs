@@ -205,7 +205,8 @@ impl Preview {
         let doc = app.session.ds().ok()?.doc.clone();
         let (w, h) = bounds(&doc, ids).map(|(w, h)| (w.max(1.0), h.max(1.0)))?;
         let scale = (px / w).min(MAX_SIDE / w.max(h)).clamp(0.01, 16.0);
-        let params = json!({"command": "file.export", "params": {"ids": ids.iter().map(|i| i.0).collect::<Vec<_>>(), "format": "png", "scale": scale}});
+        let params =
+            json!({"command": "file.export", "params": {"ids": ids.iter().map(|i| i.0).collect::<Vec<_>>(), "format": "png", "scale": scale}});
         let reply = control::handle(&mut app, &self.ctx, "engine.execute", &params)
             .map_err(|why| log::error!("couldn't render a frame for the preview: {why}"))
             .ok()?;
@@ -238,8 +239,11 @@ fn list_frames(doc: &Document) -> (Value, HashMap<String, Vec<NodeId>>) {
         }
         let Some(page) = doc.node(page_id) else { continue };
         let visible: Vec<NodeId> = page.children.iter().copied().filter(|c| doc.node(*c).is_some_and(|n| n.visible)).collect();
-        let framed: Vec<NodeId> =
-            visible.iter().copied().filter(|c| doc.node(*c).is_some_and(|n| n.kind.is_frame_like() || matches!(n.kind, NodeKind::Section { .. }))).collect();
+        let framed: Vec<NodeId> = visible
+            .iter()
+            .copied()
+            .filter(|c| doc.node(*c).is_some_and(|n| n.kind.is_frame_like() || matches!(n.kind, NodeKind::Section { .. })))
+            .collect();
         let mut frames = Vec::new();
         let groups: Vec<(String, String, Vec<NodeId>)> = if framed.is_empty() {
             if visible.is_empty() { Vec::new() } else { vec![(format!("p{page_id}"), page.name.clone(), visible)] }
