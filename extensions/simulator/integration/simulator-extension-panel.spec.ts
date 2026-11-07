@@ -28,6 +28,9 @@ import { ExtensionPanelPage } from "./pages/ExtensionPanelPage";
 
 test.use({ viewport: { width: 1440, height: 900 } });
 test.describe.configure({ mode: "serial" });
+// Skipped: written for one auto-created device per worktree and the old Take control step. Both are gone, so
+// it needs a rewrite for the canvas (per-pane pickers and streams) before it runs again.
+test.skip(true, "superseded by the canvas; see verify.mjs for the panel check");
 
 const TARBALL = process.env.SIM_EXT_TARBALL ?? "";
 const SHOTS = process.env.SIM_EXT_SHOTS ?? tmpdir();

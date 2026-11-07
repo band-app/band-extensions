@@ -204,16 +204,26 @@ describe("panel shell helpers", () => {
     assert.equal(Object.keys(none.vars).length, 0);
   });
 
-  it("groups the picker: this worktree, other worktrees, then the person's devices", () => {
+  it("groups the picker by platform and carries the reason a platform is unavailable", () => {
     const list = [
-      { name: "A", group: "mine" },
-      { name: "B", group: "other" },
-      { name: "C", group: "this" },
-      { name: "D", group: "other" },
+      { name: "Pixel 8", platform: "android" },
+      { name: "iPhone B", platform: "ios" },
+      { name: "iPhone A", platform: "ios" },
     ];
-    const g = S.pickerGroups(list);
-    assert.deepEqual(j(g.map((x) => x.label)), ["This worktree", "Other worktrees", "My devices"]);
-    assert.deepEqual(j(g[1].devices.map((d) => d.name)), ["B", "D"]);
-    assert.deepEqual(j(S.pickerGroups([{ name: "Z", group: "mine" }]).map((x) => x.key)), ["mine"]);
+    const g = S.pickerSections(list, { ios: { ok: true }, android: { ok: true } });
+    assert.deepEqual(j(g.map((x) => x.label)), ["iOS simulators", "Android emulators"]);
+    assert.deepEqual(j(g[0].devices.map((d) => d.name)), ["iPhone A", "iPhone B"]);
+    const none = S.pickerSections([], { ios: { ok: true }, android: { ok: false, reason: "No SDK" } });
+    assert.deepEqual(j(none.map((x) => [x.key, x.reason])), [["android", "No SDK"]]);
+  });
+
+  it("draws an Android phone with a thinner bezel than an iPhone", () => {
+    const avail = { width: 600, height: 700 };
+    const screen = { width: 402, height: 874 };
+    const ios = S.layout(avail, screen, true, "ios");
+    const android = S.layout(avail, screen, true, "android");
+    assert.equal(android.platform, "android");
+    assert.ok(android.bezel / android.screen.width < ios.bezel / ios.screen.width);
+    assert.ok(android.screenRadius < ios.screenRadius);
   });
 });

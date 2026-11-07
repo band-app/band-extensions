@@ -1,4 +1,4 @@
 {
-  "description": "An iOS simulator for each worktree on a Mac worker. Agents drive it with tools and a person watches and controls it in a Simulator tab.",
+  "description": "iOS simulators and Android emulators on a Mac worker. A person watches and controls them in a Simulator tab of up to 4 panes, and agents drive them with tools.",
   "minBand": "0.63.0"
 }

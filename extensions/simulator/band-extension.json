@@ -1,6 +1,6 @@
 {
   "id": "simulator",
-  "name": "iOS Simulator",
+  "name": "Simulator",
   "version": "0.5.1",
   "extensionApi": 1,
   "contributes": {
@@ -8,7 +8,10 @@
       {
         "id": "main",
         "entry": "service.mjs",
-        "requires": ["os=darwin", "xcrun"],
+        "requires": [
+          "os=darwin",
+          "xcrun"
+        ],
         "capability": "simulator"
       }
     ],
@@ -23,90 +26,202 @@
     ],
     "tools": [
       {
+        "name": "devices",
+        "description": "List every iOS simulator and Android emulator on this worktree's worker with its id, OS, model and whether it is on, and which one the Simulator tab has focused. Band creates no device on its own: pick one in the Simulator tab or pass its id as `device` to the other tools.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        },
+        "service": "main",
+        "method": "list"
+      },
+      {
         "name": "status",
-        "description": "Show this worktree's iOS simulator: its device id, whether it is booted, and its screen size in points. Each worktree has its own device on its worker (a Mac). The device boots on the first screenshot, tap or other action.",
+        "description": "Show the device the tools act on: its id, platform, whether it is on and its screen size. Android sizes are pixels, iOS sizes are points. Acts on the device named by `device`, else on the device in the last focused pane of the Simulator tab; with neither, answers with the list of devices and how to pick one.",
         "service": "main",
-        "method": "status"
-      },
-      {
-        "name": "screenshot",
-        "description": "Take a screenshot of this worktree's iOS simulator, booting it first when it is off. Answers with the image and a line with its pixel size and the scale. Coordinates for simulator_tap are in points: pixels divided by scale.",
-        "service": "main",
-        "method": "screenshot"
-      },
-      {
-        "name": "describe",
-        "description": "Read the iOS simulator screen's accessibility tree: each element's type, label, value and id, its frame and the point to tap it at. Cheaper and more exact than reading a screenshot. Coordinates are in points.",
-        "service": "main",
-        "method": "describe"
-      },
-      {
-        "name": "tap",
-        "description": "Tap the iOS simulator screen. Coordinates are in points, not screenshot pixels: divide pixels by the scale that simulator_screenshot reports (3 on current iPhones).",
+        "method": "status",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "x": { "type": "number", "description": "Horizontal position in points" },
-            "y": { "type": "number", "description": "Vertical position in points" }
+            "device": {
+              "type": "string",
+              "description": "Device id or name from simulator_devices. Without it the tool acts on the device in the pane of the Simulator tab that was focused last."
+            }
+          }
+        }
+      },
+      {
+        "name": "screenshot",
+        "description": "Take a screenshot of an iOS simulator or Android emulator, turning it on first when it is off. Answers with the image and a line with its pixel size and the scale. On iOS, coordinates for simulator_tap are in points: pixels divided by scale. On Android they are pixels. Acts on the device named by `device`, else on the device in the last focused pane of the Simulator tab; with neither, answers with the list of devices and how to pick one.",
+        "service": "main",
+        "method": "screenshot",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "device": {
+              "type": "string",
+              "description": "Device id or name from simulator_devices. Without it the tool acts on the device in the pane of the Simulator tab that was focused last."
+            }
+          }
+        }
+      },
+      {
+        "name": "describe",
+        "description": "Read the screen as a list of elements: each one's type, label, value and id, its frame and the point to tap it at. iOS reads the accessibility tree (points), Android reads uiautomator (pixels). Cheaper and more exact than reading a screenshot. Acts on the device named by `device`, else on the device in the last focused pane of the Simulator tab; with neither, answers with the list of devices and how to pick one.",
+        "service": "main",
+        "method": "describe",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "device": {
+              "type": "string",
+              "description": "Device id or name from simulator_devices. Without it the tool acts on the device in the pane of the Simulator tab that was focused last."
+            }
+          }
+        }
+      },
+      {
+        "name": "tap",
+        "description": "Tap the screen. iOS coordinates are points: divide screenshot pixels by the scale that simulator_screenshot reports (3 on current iPhones). Android coordinates are pixels. Acts on the device named by `device`, else on the device in the last focused pane of the Simulator tab; with neither, answers with the list of devices and how to pick one.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "number",
+              "description": "Horizontal position in points"
+            },
+            "y": {
+              "type": "number",
+              "description": "Vertical position in points"
+            },
+            "device": {
+              "type": "string",
+              "description": "Device id or name from simulator_devices. Without it the tool acts on the device in the pane of the Simulator tab that was focused last."
+            }
           },
-          "required": ["x", "y"]
+          "required": [
+            "x",
+            "y"
+          ]
         },
         "service": "main",
         "method": "tap"
       },
       {
         "name": "type",
-        "description": "Type text into the focused field of the iOS simulator.",
+        "description": "Type text on the device. On Android only printable ASCII can be typed. Acts on the device named by `device`, else on the device in the last focused pane of the Simulator tab; with neither, answers with the list of devices and how to pick one.",
         "inputSchema": {
           "type": "object",
-          "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 10000 } },
-          "required": ["text"]
+          "properties": {
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 10000
+            },
+            "device": {
+              "type": "string",
+              "description": "Device id or name from simulator_devices. Without it the tool acts on the device in the pane of the Simulator tab that was focused last."
+            }
+          },
+          "required": [
+            "text"
+          ]
         },
         "service": "main",
         "method": "type"
       },
       {
         "name": "button",
-        "description": "Press a hardware button on the iOS simulator.",
+        "description": "Press a hardware button. HOME, LOCK, SIDE_BUTTON and SIRI work on iOS. HOME, BACK, APP_SWITCH, LOCK and SIDE_BUTTON work on Android. Acts on the device named by `device`, else on the device in the last focused pane of the Simulator tab; with neither, answers with the list of devices and how to pick one.",
         "inputSchema": {
           "type": "object",
-          "properties": { "button": { "type": "string", "enum": ["HOME", "LOCK", "SIDE_BUTTON", "SIRI"] } },
-          "required": ["button"]
+          "properties": {
+            "button": {
+              "type": "string",
+              "enum": [
+                "HOME",
+                "BACK",
+                "APP_SWITCH",
+                "LOCK",
+                "SIDE_BUTTON",
+                "SIRI"
+              ]
+            },
+            "device": {
+              "type": "string",
+              "description": "Device id or name from simulator_devices. Without it the tool acts on the device in the pane of the Simulator tab that was focused last."
+            }
+          },
+          "required": [
+            "button"
+          ]
         },
         "service": "main",
         "method": "button"
       },
       {
         "name": "open_url",
-        "description": "Open a URL in the iOS simulator. A web URL opens Safari, a custom scheme opens the app that registered it.",
+        "description": "Open a URL on the device. A web URL opens the browser, a custom scheme opens the app that registered it. Acts on the device named by `device`, else on the device in the last focused pane of the Simulator tab; with neither, answers with the list of devices and how to pick one.",
         "inputSchema": {
           "type": "object",
-          "properties": { "url": { "type": "string", "minLength": 1 } },
-          "required": ["url"]
+          "properties": {
+            "url": {
+              "type": "string",
+              "minLength": 1
+            },
+            "device": {
+              "type": "string",
+              "description": "Device id or name from simulator_devices. Without it the tool acts on the device in the pane of the Simulator tab that was focused last."
+            }
+          },
+          "required": [
+            "url"
+          ]
         },
         "service": "main",
         "method": "openUrl"
       },
       {
         "name": "install",
-        "description": "Install an .app folder from this worktree (a simulator build) on the iOS simulator.",
+        "description": "Install a build from this worktree: an .app folder on an iOS simulator or an .apk file on an Android emulator. Acts on the device named by `device`, else on the device in the last focused pane of the Simulator tab; with neither, answers with the list of devices and how to pick one.",
         "inputSchema": {
           "type": "object",
           "properties": {
-            "path": { "type": "string", "minLength": 1, "description": "Absolute path of the .app inside this worktree" }
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Absolute path of the .app (iOS) or .apk (Android) inside this worktree"
+            },
+            "device": {
+              "type": "string",
+              "description": "Device id or name from simulator_devices. Without it the tool acts on the device in the pane of the Simulator tab that was focused last."
+            }
           },
-          "required": ["path"]
+          "required": [
+            "path"
+          ]
         },
         "service": "main",
         "method": "install"
       },
       {
         "name": "launch",
-        "description": "Launch an installed app on the iOS simulator by bundle id.",
+        "description": "Launch an installed app: an iOS bundle id, or an Android package name (or package/activity). Acts on the device named by `device`, else on the device in the last focused pane of the Simulator tab; with neither, answers with the list of devices and how to pick one.",
         "inputSchema": {
           "type": "object",
-          "properties": { "bundleId": { "type": "string", "minLength": 1 } },
-          "required": ["bundleId"]
+          "properties": {
+            "bundleId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "device": {
+              "type": "string",
+              "description": "Device id or name from simulator_devices. Without it the tool acts on the device in the pane of the Simulator tab that was focused last."
+            }
+          },
+          "required": [
+            "bundleId"
+          ]
         },
         "service": "main",
         "method": "launch"

@@ -14,15 +14,16 @@
    * an older iPhone has small ones. Landscape swaps the screen's width and height, so the same
    * rules apply.
    */
-  function layout(avail, screen, framed) {
+  function layout(avail, screen, framed, platform) {
     const sw = screen && screen.width > 0 ? screen.width : DEFAULT_SCREEN.width;
     const sh = screen && screen.height > 0 ? screen.height : DEFAULT_SCREEN.height;
     const short = Math.min(sw, sh);
     const aspect = Math.max(sw, sh) / short;
-    // Per unit of the screen's short side.
-    const bezelUnit = framed ? 0.04 : 0;
+    // Per unit of the screen's short side. An Android phone has a thinner bezel and less round corners.
+    const android = platform === "android";
+    const bezelUnit = framed ? (android ? 0.03 : 0.04) : 0;
     const buttonUnit = framed ? 0.012 : 0;
-    const radiusUnit = framed ? (aspect >= 1.9 ? 0.135 : 0.06) : 0;
+    const radiusUnit = framed ? (aspect >= 1.9 ? (android ? 0.085 : 0.135) : 0.06) : 0;
     const padX = 2 * bezelUnit * short + 2 * buttonUnit * short;
     const padY = 2 * bezelUnit * short;
     // Plain mode keeps room for the 1px border only.
@@ -38,6 +39,7 @@
     const button = Math.round(px(buttonUnit));
     return {
       framed,
+      platform: android ? "android" : "ios",
       screen: { width: screenW, height: screenH },
       bezel,
       button,
@@ -89,23 +91,28 @@
     return { vars, scheme };
   }
 
-  const GROUPS = [
-    ["this", "This worktree"],
-    ["other", "Other worktrees"],
-    ["mine", "My devices"],
+  const SECTIONS = [
+    ["ios", "iOS simulators"],
+    ["android", "Android emulators"],
   ];
 
-  /** The picker's sections in order, each with its devices. Empty sections are left out. */
-  function pickerGroups(devices) {
+  /**
+   * The picker's sections: one per platform, in order, each with its devices sorted by name and a
+   * `reason` when the platform cannot run on this worker. `platforms` is the service's
+   * {ios: {ok, reason}, android: {ok, reason}}. A section with neither devices nor a reason is left out.
+   */
+  function pickerSections(devices, platforms) {
     const out = [];
-    for (const [key, label] of GROUPS) {
-      const items = devices.filter((d) => (d.group ?? (d.owned ? "other" : "mine")) === key);
-      if (items.length) out.push({ key, label, devices: items });
+    for (const [key, label] of SECTIONS) {
+      const items = devices.filter((d) => d.platform === key).sort((a, b) => a.name.localeCompare(b.name));
+      const status = platforms && platforms[key];
+      const reason = status && status.ok === false ? status.reason || "Not available" : null;
+      if (items.length || reason) out.push({ key, label, devices: items, reason });
     }
     return out;
   }
 
   const themeVarNames = Object.keys(TOKEN_VARS);
-  const api = { DEFAULT_SCREEN, layout, bootText, themeVars, themeVarNames, pickerGroups };
+  const api = { DEFAULT_SCREEN, layout, bootText, themeVars, themeVarNames, pickerSections };
   if (typeof globalThis !== "undefined") globalThis.BandSimShell = api;
 })();

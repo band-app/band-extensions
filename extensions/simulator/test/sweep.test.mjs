@@ -71,8 +71,7 @@ describe("sweep of removed worktrees", () => {
     await set.rememberFolder("wt-live", live);
     await set.rememberFolder("wt-gone", gone);
     await set.rememberFolder("wt-watched", gone);
-    set.hasLiveStream = (udid) => udid === `U-${PREFIX} ${D} wt-watched`;
-    const deleted = await set.sweepRemoved();
+    const deleted = await set.sweepRemoved({ isWatched: (id) => id === `ios:U-${PREFIX} ${D} wt-watched` });
     assert.deepEqual(deleted, [`${PREFIX} ${D} wt-gone`]);
     assert.deepEqual(names(), [
       "My own – wt-gone",
@@ -95,5 +94,16 @@ describe("sweep of removed worktrees", () => {
     assert.deepEqual(names(), [`${PREFIX} ${D} other`]);
     assert.deepEqual(await after.keysAt(folder), []);
     assert.equal(existsSync(join(state, "worktrees.json")), true);
+  });
+
+  it("never deletes a device a saved layout shows, and keeps the devices people create in the picker", async () => {
+    const gone = join(dir, "gone-too");
+    seed([dev(`${PREFIX} ${D} wt-shown`), dev(`${PREFIX} ${D} wt-plain`), dev(`${PREFIX} ${D} iPhone 17 Pro`)]);
+    const set = new DeviceSet();
+    await set.rememberFolder("wt-shown", gone);
+    await set.rememberFolder("wt-plain", gone);
+    const deleted = await set.sweepRemoved({ protectedIds: new Set([`ios:U-${PREFIX} ${D} wt-shown`]) });
+    assert.deepEqual(deleted, [`${PREFIX} ${D} wt-plain`]);
+    assert.deepEqual(names(), [`${PREFIX} ${D} iPhone 17 Pro`, `${PREFIX} ${D} wt-shown`].sort());
   });
 });
