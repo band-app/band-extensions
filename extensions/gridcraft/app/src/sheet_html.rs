@@ -243,7 +243,9 @@ fn style_css(wb: &Workbook, sheet: &Sheet, style: &Style, n: usize) -> String {
         // The default rule draws gridlines; this cell class turns them off unless it sets a border.
         css.push_str("--gl:transparent;");
     }
-    format!(".s{n}{{{css}}}")
+    // `.gc-t td.sN` ties the page's `.gc-t td.gc-n` in specificity and comes later, so it wins over
+    // the page defaults (borders, padding, alignment, wrapping) that `.sN` alone would lose to.
+    format!(".gc-t td.s{n}{{{css}}}")
 }
 
 fn border_css(wb: &Workbook, line: BorderLine) -> Option<String> {
