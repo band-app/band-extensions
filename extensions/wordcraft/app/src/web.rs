@@ -151,6 +151,7 @@ impl eframe::App for WebShell {
         self.app.borrow_mut().ui(ui);
         // wrapper: the editor borrows the app itself, so it runs once the borrow above is dropped.
         if let Some((bridge, editor)) = &mut self.band {
+            editor.frame();
             bridge.sync(editor);
         }
     }

@@ -281,6 +281,174 @@ try {
     await page.close();
   }
 
+
+  // The compact preview (S1 to S4 of the preview brief): plain HTML built from the engine's own slide pictures.
+  {
+    const PHONE = { width: 390, height: 844 };
+    const ctx = await browser.newContext({ viewport: PHONE, hasTouch: true, deviceScaleFactor: 1 });
+    const page = await ctx.newPage();
+    page.on("pageerror", (e) => console.log("  [pageerror]", String(e).slice(0, 300)));
+    await page.goto(pageUrl);
+    const cdp = await ctx.newCDPSession(page);
+    const touch = (type, points) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: points.map(([x, y], i) => ({ x, y, id: i })) });
+    const swipe = async (from, to, steps = 12) => {
+      await touch("touchStart", [from]);
+      for (let i = 1; i <= steps; i++) {
+        await sleep(16);
+        await touch("touchMove", [[from[0] + ((to[0] - from[0]) * i) / steps, from[1] + ((to[1] - from[1]) * i) / steps]]);
+      }
+      await touch("touchEnd", []);
+    };
+    const size = (w, h) =>
+      page.evaluate(([w, h]) => {
+        document.body.style.margin = "0";
+        document.querySelector("iframe[data-editor]").style.cssText = `width:${w}px;height:${h}px;border:0;display:block`;
+      }, [w, h]);
+    const frame = () => page.frameLocator("iframe[data-editor]");
+    const inFrame = (fn, arg) => page.frames().find((f) => f.url().startsWith(buildBase)).evaluate(fn, arg);
+    const openAs = async (layout, bytes, w, h) => {
+      const id = await page.evaluate(() => window.frame());
+      await size(w, h);
+      await page.evaluate((i) => window.whenHello(i), id);
+      await page.evaluate(([i, b, l]) => {
+        const m = { type: "init", file: { name: "deck.pptx", path: "deck.pptx", mime: "", bytes: b, readOnly: false }, theme: { mode: "dark", tokens: { background: "#10203a", foreground: "#f0e6d2" } } };
+        if (l) m.layout = l;
+        window.send(i, m);
+      }, [id, Array.from(bytes), layout]);
+      await waitLog(page, id, "ready");
+      return id;
+    };
+    // The picture of slide `n` as a size in bytes, once it has loaded.
+    const pictureSize = (n) =>
+      inFrame(async (n) => {
+        for (let t = 0; t < 100; t++) {
+          const img = document.querySelectorAll(".bp-slide img")[n];
+          if (img && img.getAttribute("src") && img.complete && img.naturalWidth > 0) return (await (await fetch(img.src)).arrayBuffer()).byteLength;
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        return 0;
+      }, n);
+    // Headless Chrome drops pointer input to this framed page below about y=750 (a plain page has no such gap), where
+    // the next button and the back pill sit, so those two get a click event instead of a finger.
+    const counter = () => frame().locator("#bp-count").innerText();
+    const previewShown = () => inFrame(() => !document.getElementById("bp").hidden);
+    try {
+      // A three slide deck with notes on the second, made by editing the fixture and saving.
+      const maker = await openAs("regular", pptx, 1040, 700);
+      await sleep(2000);
+      await call(page, maker, "add_slide", {});
+      await call(page, maker, "add_slide", {});
+      await call(page, maker, "run_command", { command: "slide.notes", params: { index: 1, text: "Speaker notes for the second slide" } });
+      await page.evaluate((i) => window.send(i, { type: "requestSave" }), maker);
+      await waitLog(page, maker, "save");
+      const deck = Buffer.from((await logOf(page, maker)).find((m) => m.type === "save").bytes);
+
+      // S3: a regular frame opens the editor and no preview.
+      const regularId = await openAs("regular", deck, 1280, 720);
+      await sleep(2500);
+      check("S3-regular-no-preview", !(await previewShown()) && (await frame().locator("#bp-back").isHidden()), "the preview is hidden in the regular layout");
+      await page.setViewportSize({ width: 1280, height: 720 });
+      await page.screenshot({ path: join(out, "preview-s3-regular.png") });
+      await page.setViewportSize(PHONE);
+
+      // S1: a compact frame opens the preview, built from the engine's pictures.
+      await openAs("compact", deck, PHONE.width, PHONE.height);
+      const first = await pictureSize(0);
+      check("S1-preview-shown", (await previewShown()) && first > 1000, `preview shown, slide 1 picture ${first} bytes`);
+      check("S1-counter", (await counter()) === "1 / 3", await counter());
+      const box = await frame().locator("#bp").boundingBox();
+      check("S1-fills-frame", box && Math.round(box.width) === PHONE.width && Math.round(box.height) === PHONE.height, JSON.stringify(box));
+      const theme = await inFrame(() => getComputedStyle(document.getElementById("bp")).backgroundColor);
+      check("S1-theme", theme === "rgb(16, 32, 58)", `chrome background ${theme} from the theme token`);
+      await page.screenshot({ path: join(out, "preview-s1-slide1.png") });
+      // Only the slides near the current one are drawn.
+      const drawn = await inFrame(() => [...document.querySelectorAll(".bp-slide img")].map((i) => !!i.getAttribute("src")));
+      check("S1-lazy", drawn[0] && !drawn[2], `drawn: ${JSON.stringify(drawn)}`);
+
+      // A swipe pages to the next slide; the arrow and the notes toggle work.
+      await swipe([330, 420], [60, 420]);
+      await sleep(900);
+      check("S1-swipe", (await counter()) === "2 / 3", await counter());
+      check("S1-next-drawn", (await pictureSize(1)) > 1000, "slide 2 drawn after the swipe");
+      await frame().locator("#bp-notes-btn").click();
+      const notes = await frame().locator("#bp-notes").innerText();
+      check("S1-notes", /Speaker notes for the second slide/.test(notes), notes);
+      await page.screenshot({ path: join(out, "preview-s1-slide2-notes.png") });
+      await frame().locator("#bp-notes-btn").click();
+      await frame().locator("#bp-next").dispatchEvent("click");
+      await sleep(900);
+      check("S1-next-button", (await counter()) === "3 / 3", await counter());
+      await page.keyboard.press("ArrowLeft");
+      await sleep(900);
+      check("S1-arrow-key", (await counter()) === "2 / 3", await counter());
+
+      // Pinch: two fingers spreading make the slide larger.
+      const width = () => inFrame(() => document.querySelectorAll(".bp-zoom")[1].getBoundingClientRect().width);
+      const w0 = await width();
+      await touch("touchStart", [[170, 400], [220, 400]]);
+      for (let i = 1; i <= 10; i++) {
+        await sleep(16);
+        await touch("touchMove", [[170 - i * 8, 400], [220 + i * 8, 400]]);
+      }
+      await touch("touchEnd", []);
+      await sleep(400);
+      const w1 = await width();
+      check("S1-pinch", w1 > w0 * 1.8, `slide width ${Math.round(w0)} -> ${Math.round(w1)} px`);
+      await page.screenshot({ path: join(out, "preview-s1-pinched.png") });
+
+
+      // S2: Edit opens the editor; back returns to the preview showing the edits; dirty and save behave as before.
+      await openAs("compact", deck, PHONE.width, PHONE.height).then(async (id) => {
+        const before = await pictureSize(0);
+        await frame().locator("#bp-edit").click();
+        await sleep(1500);
+        check("S2-edit-opens-editor", !(await previewShown()) && (await frame().locator("#bp-back").isVisible()), "preview hidden, back control shown");
+        await page.screenshot({ path: join(out, "preview-s2-editor.png") });
+        check("S2-clean-before-edit", !(await logOf(page, id)).some((m) => m.type === "dirty"), "switching to the editor does not dirty the file");
+        await call(page, id, "add_text_box", { x: 60, y: 60, w: 600, h: 90, text: "preview edit" });
+        await waitLog(page, id, "dirty");
+        await frame().locator("#bp-back").dispatchEvent("click");
+        await sleep(1000);
+        let after = before;
+        for (let t = 0; t < 100 && after === before; t++) {
+          after = await pictureSize(0);
+          await sleep(100);
+        }
+        await page.screenshot({ path: join(out, "preview-s2-back.png") });
+        check("S2-back-shows-edit", (await previewShown()) && after !== before, `slide 1 picture ${before} -> ${after} bytes`);
+        const dirties = (await logOf(page, id)).filter((m) => m.type === "dirty").map((m) => m.dirty);
+        check("S2-still-dirty", sameJson(dirties, [true]), JSON.stringify(dirties));
+        check("S2-edit-kept", /preview edit/.test(text(await call(page, id, "inspect_slide", { index: 0 }))), "the document holds the edit");
+        await page.evaluate((i) => window.send(i, { type: "requestSave" }), id);
+        await waitLog(page, id, "save");
+        const saved = Buffer.from((await logOf(page, id)).find((m) => m.type === "save").bytes);
+        check("S2-save", saved[0] === 0x50 && saved[1] === 0x4b, `${saved.length} bytes, PK header`);
+        await page.evaluate((i) => window.send(i, { type: "saved" }), id);
+        await waitLog(page, id, "dirty", 2);
+        check("S2-saved", sameJson((await logOf(page, id)).filter((m) => m.type === "dirty").map((m) => m.dirty), [true, false]), "saved clears dirty");
+        writeFileSync(join(out, "preview-edited.pptx"), saved);
+        return saved;
+      }).then(async (edited) => {
+        // S4: reload with new bytes updates the preview.
+        const id = await openAs("compact", deck, PHONE.width, PHONE.height);
+        const a = await pictureSize(0);
+        await page.evaluate(([i, b]) => window.send(i, { type: "reload" }, b), [id, Array.from(edited)]);
+        let b = a;
+        for (let t = 0; t < 300 && b === a; t++) {
+          await sleep(100);
+          b = await pictureSize(0);
+        }
+        await page.screenshot({ path: join(out, "preview-s4-reload.png") });
+        check("S4-reload", b !== a && (await previewShown()), `slide 1 picture ${a} -> ${b} bytes after reload`);
+        check("S4-count", (await counter()) === "1 / 3", await counter());
+      });
+      await ctx.close();
+    } catch (e) {
+      await ctx.close();
+      throw e;
+    }
+  }
+
   // Compact layout, touch and selection (shared scenarios in scripts/verify-compact.mjs).
   {
     await compactScenarios(
@@ -291,6 +459,11 @@ try {
         prepare: ({ page, id, call }) => call(page, id, "call_app", { method: "ui.set", params: { zoom: 0.6 } }),
         restore: ({ page, id, call }) => call(page, id, "call_app", { method: "ui.set", params: { zoom: null } }),
         file: { name: "sample.pptx", bytes: readFileSync(fixture) },
+        // A compact frame opens the preview; the shared scenarios are about the editor, so press Edit first.
+        afterOpen: async ({ page }) => {
+          await page.frameLocator("iframe[data-editor]").locator("#bp-edit").click();
+          await sleep(1500);
+        },
         tap: [270, 437],
         clear: [250, 700],
         drag: { from: [340, 700], to: [200, 700] },

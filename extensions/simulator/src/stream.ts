@@ -18,14 +18,6 @@ const BUTTONS: Record<string, string> = {
   SIDE_BUTTON: "side_button",
   SIRI: "siri",
 };
-export const BUTTON_NAMES = Object.keys(BUTTONS);
-
-export function serveSimButton(name: string): string {
-  const mapped = BUTTONS[name];
-  if (!mapped) throw new Error(`button must be one of ${BUTTON_NAMES.join(", ")}`);
-  return mapped;
-}
-
 /** The orientations the panel's Rotate button uses. */
 export const ORIENTATIONS = ["portrait", "landscape_left"];
 
@@ -151,7 +143,7 @@ class FrameScaler {
 }
 
 /** Holds the newest message, so a slow viewer skips frames instead of lagging further behind. */
-class Latest<T> {
+export class Latest<T> {
   private value: T | undefined;
   private waiter: (() => void) | null = null;
   private ended = false;
@@ -218,7 +210,7 @@ const unit = (v: unknown): number | null =>
 export function openScreenStream(
   helper: Helper,
   helpers: ServeSimHelpers,
-  info: { width: number; height: number; udid: string; name: string },
+  info: { width: number; height: number; udid: string; name: string; model?: string; platform?: string },
   params: unknown = {},
 ): ScreenStream {
   const abort = new AbortController();

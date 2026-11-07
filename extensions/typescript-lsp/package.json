@@ -1,0 +1,16 @@
+{
+  "name": "band-extension-typescript-lsp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "typescript-language-server as a Band extension: a language server for TypeScript and JavaScript.",
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "node ../../scripts/check-language-server.mjs .",
+    "test": "node build.mjs && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "typescript": "5.9.3",
+    "typescript-language-server": "5.1.3"
+  }
+}

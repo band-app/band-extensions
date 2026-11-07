@@ -2,10 +2,9 @@
 // with a MessagePort. Everything else goes over that port (docs/extensions.md, Panels).
 //
 // The page opens the extension's "screen" stream, which carries the RFB bytes between noVNC and the
-// worktree's x11vnc, and draws the desktop with noVNC. The manifest asks for control from the start
-// ("defaultControl"), so Band enables input as soon as the stream connects. Pressing Release in
-// Band's toolbar makes the stream view-only: the hub then drops the viewer's bytes, so the picture
-// stops updating until control comes back, when this page reconnects to get a fresh picture.
+// worktree's x11vnc, and draws the desktop with noVNC. Band's panel input is always on: it sends
+// control {enabled: true} when the first stream opens, and the manifest's binaryInput lets noVNC's
+// bytes through. An older Band that sends control {enabled: false} makes the page view-only.
 import RFB from "@novnc/novnc";
 
 const STREAM_NAME = "screen";

@@ -301,6 +301,106 @@ try {
     await page.close();
   }
 
+  // P1 to P5: the compact preview (HTML table built from the engine), Edit and back, reload, theme.
+  {
+    const phone = { width: 390, height: 844 };
+    const ctx = await browser.newContext({ viewport: phone, hasTouch: true, deviceScaleFactor: 1 });
+    const page = await ctx.newPage();
+    page.on("pageerror", (e) => console.log("  [pageerror]", String(e).slice(0, 300)));
+    await page.goto(pageUrl);
+    const openCompact = async (name, bytes, layout = "compact") => {
+      const id = await page.evaluate(() => window.frame());
+      await page.evaluate(() => { document.body.style.margin = "0"; const f = document.querySelector("iframe[data-editor]"); f.style.cssText = "width:390px;height:844px;border:0;display:block"; });
+      await page.evaluate((i) => window.whenHello(i), id);
+      await page.evaluate(([i, n, b, l]) => {
+        const msg = { type: "init", file: { name: n, path: n, mime: "", bytes: b, readOnly: false }, theme: { tokens: {} } };
+        if (l) msg.layout = l;
+        window.send(i, msg);
+      }, [id, name, Array.from(bytes), layout]);
+      await waitLog(page, id, "ready");
+      await sleep(2000);
+      return id;
+    };
+    const inFrame = () => page.frames().find((f) => f !== page.mainFrame());
+    const previewOn = () => inFrame().evaluate(() => document.getElementById("gc-preview")?.classList.contains("on") === true);
+    const previewText = () => inFrame().evaluate(() => document.getElementById("gc-sheet")?.textContent ?? "");
+    const shot = (name) => page.screenshot({ path: join(out, `${name}.png`) });
+
+    // P1: compact opens the preview, which scrolls and zooms natively.
+    const id = await openCompact("book.xlsx", xlsx);
+    await shot("p1-preview");
+    const info = await inFrame().evaluate(() => {
+      const sc = document.getElementById("gc-scroll");
+      return {
+        on: document.getElementById("gc-preview").classList.contains("on"),
+        table: !!document.querySelector("#gc-sheet table.gc-t"),
+        text: document.getElementById("gc-sheet").textContent,
+        touch: getComputedStyle(sc).touchAction,
+        overflow: getComputedStyle(sc).overflow,
+        zoom: document.getElementById("gc-viewport").content,
+        canvasVisible: !!document.getElementById("gridcraft_canvas"),
+      };
+    });
+    check("P1", info.on && info.table && /apple/.test(info.text), `preview on=${info.on}, table=${info.table}, text has apple=${/apple/.test(info.text)}`);
+    check("P1b", /pinch-zoom|manipulation/.test(info.touch) && /auto|scroll/.test(info.overflow) && /user-scalable=yes/.test(info.zoom), `touch-action ${info.touch}, overflow ${info.overflow}, viewport ${info.zoom}`);
+    // Tapping a cell shows its value and address.
+    const cell = inFrame().locator("#gc-sheet td", { hasText: "apple" }).first();
+    await cell.tap();
+    const detail = await inFrame().locator("#gc-detail").innerText();
+    check("P1c", /A\d+/.test(detail) && /apple/.test(detail), detail.replace(/\s+/g, " "));
+    check("P1d", (await logOf(page, id)).every((m) => m.type !== "selection" || m.selection === null), "the preview reports no selection");
+
+    // P2: Edit opens the editor, an edit made there shows in the preview, dirty and save work as before.
+    await inFrame().locator("#gc-edit").tap();
+    await sleep(1500);
+    const editing = await inFrame().evaluate(() => ({ on: document.getElementById("gc-preview").classList.contains("on"), back: !document.getElementById("gc-back").hidden }));
+    await shot("p2-editor");
+    check("P2a", !editing.on && editing.back, `after Edit: preview on=${editing.on}, back button=${editing.back}`);
+    await call(page, id, "set_cell", { cell: "C3", input: "from-editor" });
+    await waitLog(page, id, "dirty");
+    await inFrame().locator("#gc-back").tap();
+    await sleep(1500);
+    await shot("p2-back");
+    check("P2b", (await previewOn()) && /from-editor/.test(await previewText()), "back shows the preview with the edit");
+    const dirties = (await logOf(page, id)).filter((m) => m.type === "dirty").map((m) => m.dirty);
+    check("P2c", sameJson(dirties, [true]), `dirty after the round trip: ${JSON.stringify(dirties)}`);
+    await page.evaluate((i) => window.send(i, { type: "requestSave" }), id);
+    await waitLog(page, id, "save");
+    const saved = Buffer.from((await logOf(page, id)).find((m) => m.type === "save").bytes);
+    check("P2d", saved[0] === 0x50 && saved[1] === 0x4b, `save from the compact layout: ${saved.length} bytes`);
+
+    // P4: reload with new bytes updates the preview.
+    const id4 = await openCompact("book.xlsx", xlsx);
+    const beforeReload = await previewText();
+    await page.evaluate(([i, b]) => window.send(i, { type: "reload" }, b), [id4, Array.from(saved)]);
+    await sleep(3000);
+    const afterReload = await previewText();
+    await shot("p4-reload");
+    check("P4", !/from-editor/.test(beforeReload) && /from-editor/.test(afterReload), `before has edit=${/from-editor/.test(beforeReload)}, after has edit=${/from-editor/.test(afterReload)}`);
+
+    // P5: the theme message restyles the preview's chrome, not the sheet.
+    await page.evaluate((i) => window.send(i, { type: "theme", mode: "dark", tokens: { background: "#101820", foreground: "#f0f0f0" } }), id4);
+    await sleep(500);
+    const themed = await inFrame().evaluate(() => ({
+      bg: getComputedStyle(document.getElementById("gc-preview")).backgroundColor,
+      sheet: getComputedStyle(document.getElementById("gc-sheet")).backgroundColor,
+    }));
+    await shot("p5-dark");
+    check("P5", themed.bg === "rgb(16, 24, 32)" && themed.sheet === "rgb(255, 255, 255)", `chrome ${themed.bg}, sheet ${themed.sheet}`);
+
+    // P3: a regular frame opens the editor directly.
+    await page.setViewportSize({ width: 1280, height: 800 });
+    const id3 = await page.evaluate(() => window.frame());
+    await page.evaluate(() => { const f = document.querySelector("iframe[data-editor]"); f.style.cssText = "width:1280px;height:800px;border:0;display:block"; });
+    await page.evaluate((i) => window.whenHello(i), id3);
+    await page.evaluate(([i, b]) => window.send(i, { type: "init", file: { name: "book.xlsx", path: "book.xlsx", mime: "", bytes: b, readOnly: false }, theme: { tokens: {} }, layout: "regular" }), [id3, Array.from(xlsx)]);
+    await waitLog(page, id3, "ready");
+    await sleep(2500);
+    await shot("p3-regular");
+    check("P3", !(await previewOn()) && (await inFrame().evaluate(() => document.getElementById("gc-back").hidden)), "regular layout: no preview, no back button");
+    await ctx.close();
+  }
+
   // S7 to S10: compact layout, touch, selection (shared scenarios in scripts/verify-compact.mjs).
   {
     const rows = ["fruit,qty"];
@@ -310,6 +410,12 @@ try {
       {
         ext: "gridcraft",
         file: { name: "long.csv", bytes: Buffer.from(rows.join("\n") + "\n") },
+        // The shared scenarios drive the egui editor, so they press Edit first.
+        prepare: async ({ page }) => {
+          const frame = page.frames().find((f) => f !== page.mainFrame());
+          await frame.locator("#gc-edit").tap();
+          await sleep(1500);
+        },
         tap: [200, 190],
         // A workbook always has an active cell, so the selection is replaced, never cleared.
         noNull: true,

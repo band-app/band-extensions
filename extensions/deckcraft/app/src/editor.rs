@@ -15,6 +15,7 @@ use deckcraft_ui_egui::{Services, SlideApp};
 use serde_json::json;
 
 use crate::mcp::McpHost;
+use crate::preview::{Action, Preview};
 
 pub struct DeckcraftEditor {
     app: Rc<RefCell<SlideApp>>,
@@ -30,6 +31,16 @@ pub struct DeckcraftEditor {
     sent: VecDeque<Arc<deckcraft_engine::model::Presentation>>,
     /// The interface as it was before the compact layout, restored by the regular one.
     regular_ui: Option<RegularUi>,
+    /// The HTML preview shown first in the compact layout. `None` when the page has no preview.
+    preview: Option<Preview>,
+    compact: bool,
+    /// The person pressed Edit, so the compact layout shows the editor until they go back.
+    editing: bool,
+    /// The preview is on screen now.
+    previewing: bool,
+    back_shown: bool,
+    /// The presentation the preview was last built from, to see when it changed.
+    deck: Option<(u64, u64)>,
 }
 
 /// The interface settings the compact layout changes.
@@ -61,7 +72,63 @@ impl DeckcraftEditor {
 
     pub fn new(app: Rc<RefCell<SlideApp>>, ctx: egui::Context, want_save: Rc<Cell<bool>>) -> Self {
         let mcp = McpHost::new(app.clone(), ctx.clone());
-        Self { app, ctx, mcp, name: "Presentation.pptx".to_string(), uid: None, want_save, sent: VecDeque::new(), regular_ui: None }
+        let repaint = ctx.clone();
+        let preview = Preview::new(move || repaint.request_repaint());
+        Self {
+            app,
+            ctx,
+            mcp,
+            name: "Presentation.pptx".to_string(),
+            uid: None,
+            want_save,
+            sent: VecDeque::new(),
+            regular_ui: None,
+            preview,
+            compact: false,
+            editing: false,
+            previewing: false,
+            back_shown: false,
+            deck: None,
+        }
+    }
+
+    /// Run once per frame after `Bridge::sync`: switch between the preview and the editor, and keep
+    /// the preview current. In the compact layout the preview shows until the person presses Edit;
+    /// the regular layout never shows it. The document, its dirty state and saving stay with the
+    /// editor throughout, so switching loses nothing.
+    pub fn preview_frame(&mut self) {
+        let Some(preview) = self.preview.clone() else { return };
+        match preview.take_action() {
+            Action::Edit => self.editing = true,
+            Action::Back => self.editing = false,
+            Action::None => {}
+        }
+        let doc = self.with_doc(|d| (d.uid, d.revision, d.doc.clone()));
+        let want = self.compact && !self.editing && doc.is_some();
+        if want != self.previewing {
+            self.previewing = want;
+            preview.show(want);
+            self.ctx.request_repaint();
+        }
+        let back = self.compact && self.editing && doc.is_some();
+        if back != self.back_shown {
+            self.back_shown = back;
+            preview.show_back(back);
+        }
+        if !want {
+            return;
+        }
+        let Some((uid, revision, pres)) = doc else { return };
+        // Edits, an agent's tool call and a reload each change the presentation's revision or uid.
+        if self.deck != Some((uid, revision)) {
+            preview.set_deck(&pres);
+            self.deck = Some((uid, revision));
+        }
+        // One picture a frame keeps the page responsive on a long deck.
+        if let Some(index) = preview.needed() {
+            preview.draw(&pres, index);
+            self.ctx.request_repaint();
+        }
     }
 
     /// Open `bytes` as a new presentation and remember which one it is.
@@ -158,6 +225,7 @@ impl Editor for DeckcraftEditor {
     }
 
     fn set_layout(&mut self, layout: Layout) {
+        self.compact = layout.is_compact();
         let Ok(mut app) = self.app.try_borrow_mut() else { return };
         if layout.is_compact() {
             if self.regular_ui.is_none() {
@@ -185,6 +253,10 @@ impl Editor for DeckcraftEditor {
     /// `inspect_slide` take (from 0) and the id `inspect_slide` and `set_text` take. Selected text
     /// inside it is reported as `text`.
     fn selection(&mut self) -> Option<Selection> {
+        // The preview shows pictures, so it has nothing to select; the editor's selection comes back with it.
+        if self.previewing {
+            return None;
+        }
         let uid = self.uid?;
         let app = self.app.try_borrow().ok()?;
         let doc = app.session.documents().iter().find(|d| d.uid == uid)?;

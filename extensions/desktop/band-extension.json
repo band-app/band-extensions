@@ -20,7 +20,6 @@
         "icon": "monitor",
         "entry": "panel.html",
         "capability": "desktop",
-        "defaultControl": true,
         "binaryInput": true
       }
     ],

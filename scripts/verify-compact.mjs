@@ -33,6 +33,8 @@ const PHONE = { width: 390, height: 844 };
  *   minChange: share of pixels that must differ between compact and regular (default 0.04)
  *   prepare / restore: async ({ page, id, call }) => void   zoom in before the drag, back to fit before the tap
  *   settle: ms to wait after open (default 2500)
+ *   afterOpen: async ({ page, id }) => void   runs after a compact open settles (DeckCraft opens a preview first;
+ *                                             its hook presses Edit so the scenarios run on the editor)
  * }
  */
 export async function compactScenarios(env, cfg) {
@@ -92,6 +94,7 @@ export async function compactScenarios(env, cfg) {
     }, [id, cfg.file.name, Array.from(cfg.file.bytes), layout]);
     await waitLog(page, id, "ready");
     await sleep(settle);
+    if (layout === "compact") await cfg.afterOpen?.({ page, id });
     return id;
   };
   const selections = async (id) => (await logOf(page, id)).filter((m) => m.type === "selection");

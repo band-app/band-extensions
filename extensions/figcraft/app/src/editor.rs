@@ -17,6 +17,7 @@ use figcraft_ui_egui::{FigApp, control};
 use serde_json::{Value, json};
 
 use crate::mcp::McpHost;
+use crate::preview::Preview;
 
 /// The file's format, from its name.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -49,11 +50,14 @@ pub struct FigcraftEditor {
     /// The panels as they were before the compact layout, restored by the regular one:
     /// `left_collapsed` and `ui_minimized`.
     regular_ui: Option<(bool, bool)>,
+    /// The HTML preview a compact layout opens first.
+    preview: Preview,
 }
 
 impl FigcraftEditor {
     pub fn new(app: Rc<RefCell<FigApp>>, ctx: egui::Context, want_save: Rc<Cell<bool>>) -> Self {
         let mcp = McpHost::new(app.clone(), ctx.clone(), want_save.clone());
+        let preview = Preview::new(app.clone(), ctx.clone());
         Self {
             app,
             ctx,
@@ -65,7 +69,13 @@ impl FigcraftEditor {
             failed: false,
             sent: VecDeque::new(),
             regular_ui: None,
+            preview,
         }
+    }
+
+    /// Run once per frame, before the bridge: drives the preview.
+    pub fn tick(&mut self) {
+        self.preview.tick();
     }
 
     /// Close every tab and open `bytes` as the only one.
@@ -114,6 +124,7 @@ impl Editor for FigcraftEditor {
         self.name = if name.is_empty() { "Design.figcraft".to_string() } else { name.to_string() };
         self.format = Format::of(&self.name);
         self.replace_with(&bytes);
+        self.preview.reset();
     }
 
     fn is_open(&self) -> bool {
@@ -126,6 +137,7 @@ impl Editor for FigcraftEditor {
         self.sent.clear();
         self.failed = false;
         self.replace_with(&bytes);
+        self.preview.invalidate();
     }
 
     fn is_dirty(&self) -> bool {
@@ -166,6 +178,7 @@ impl Editor for FigcraftEditor {
     /// Compact also closes the open panel and minimizes the interface (the toolbar stays), so a wide
     /// frame such as an iPad gets the same canvas-first layout.
     fn set_layout(&mut self, layout: Layout) {
+        self.preview.set_compact(layout.is_compact());
         let Ok(mut app) = self.app.try_borrow_mut() else { return };
         if layout.is_compact() {
             if self.regular_ui.is_none() {
@@ -182,9 +195,17 @@ impl Editor for FigcraftEditor {
         self.ctx.request_repaint();
     }
 
+    fn set_theme(&mut self, mode: &str, tokens: &Value) {
+        self.preview.set_theme(mode, tokens);
+    }
+
     /// The first selected node, addressed by the id every FigCraft tool takes (`get_node`, `create_node`
     /// parents, `execute` commands).
     fn selection(&mut self) -> Option<Selection> {
+        // The preview reports none: the editor's selection is out of sight while it shows.
+        if self.preview.is_previewing() {
+            return None;
+        }
         let app = self.app.try_borrow().ok()?;
         let ds = app.session.ds().ok()?;
         let id = *ds.selection.first()?;

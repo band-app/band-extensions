@@ -1,6 +1,6 @@
 # band-extensions
 
-Official extensions for [Band](https://github.com/band-app/band). Five are editors for the ArtCraft apps: each is a web build of one app that Band frames in a sandboxed iframe, so a person edits a file in a Band tab and an agent edits the same open document through the app's MCP tools. Two, the simulator and the desktop, are worker services with a panel and agent tools.
+Official extensions for [Band](https://github.com/band-app/band). Five are editors for the ArtCraft apps: each is a web build of one app that Band frames in a sandboxed iframe, so a person edits a file in a Band tab and an agent edits the same open document through the app's MCP tools. Two, the simulator and the desktop, are worker services with a panel and agent tools. Two, typescript-lsp and python-lsp, give the code viewer a language server.
 
 | Extension | Opens | App |
 |---|---|---|
@@ -11,6 +11,8 @@ Official extensions for [Band](https://github.com/band-app/band). Five are edito
 | [vectorcraft](extensions/vectorcraft/README.md) | `*.svg`, `*.svgz`, `*.vectorcraft` | [VectorCraft](https://github.com/storytold/vectorcraft) |
 | [desktop](extensions/desktop/README.md) | a Desktop panel and six `desktop_*` agent tools | a virtual desktop per worktree on a Linux worker (Xvfb, x11vnc, noVNC) |
 | [simulator](extensions/simulator/README.md) | a Simulator panel and nine `simulator_*` agent tools | iOS Simulator on a Mac worker, through [serve-sim](https://github.com/EvanBacon/serve-sim) |
+| [typescript-lsp](extensions/typescript-lsp/README.md) | a language server for `*.ts *.tsx *.js *.jsx` | [typescript-language-server](https://github.com/typescript-language-server/typescript-language-server) |
+| [python-lsp](extensions/python-lsp/README.md) | a language server for `*.py` | [Pyright](https://github.com/microsoft/pyright) |
 
 ## Install from Band
 
@@ -70,14 +72,14 @@ Band adds two optional messages to the editor protocol. The extension API stays 
 - Band to editor: `init` may carry `layout: "compact" | "regular"`, and Band sends `{ type: "layout", layout }` when it changes. Compact is a phone-width page or the iOS app. The editor hides ribbons, toolbars and side panels, sizes its interface for touch, and restores the normal interface on `regular`. An unknown value changes nothing.
 - Editor to Band: `{ type: "selection", selection }` when the selection has stayed the same for 250 ms. `selection` is `null` when nothing is selected, otherwise `{ address, kind, label, text?, rect? }`. `address` is what the editor's own tools accept, `label` is short text for a person, `text` is the selected content cut to 4 KB with a trailing "…", and `rect` is in the editor's document units.
 
-`crates/band-editor` does the protocol work. An app implements two optional `Editor` methods, `set_layout(Layout)` and `selection() -> Option<Selection>`, and `Bridge::sync` calls `selection()` every frame and sends only a change.
+`crates/band-editor` does the protocol work. An app implements two optional `Editor` methods, `set_layout(Layout)` and `selection() -> Option<Selection>`, and `Bridge::sync` calls `selection()` every frame and sends only a change. A third optional method, `set_theme(mode, tokens)`, receives the theme from `init` and from each `theme` message, for an extension that draws its own chrome (the figcraft preview does).
 
 While the layout is compact, the bridge also puts a touch shim in front of eframe (`crates/band-editor/src/touch.rs`). A tap reaches the app as a tap, so it selects. A one-finger drag becomes wheel events on the canvas, so it scrolls or pans and does not select. Two-finger gestures do nothing in compact mode.
 
 | Extension | Compact | Selection address | Kind |
 |---|---|---|---|
 | gridcraft | ribbon collapsed, formula and status bars off, interface 125% | `Sheet1!B2:C4` (a quoted sheet name when it has spaces), with the range as TSV in `text` | `cell`, `range` |
-| deckcraft | ribbon collapsed, task pane and notes closed, slide list at its narrowest | `slide<index>!<shape id>`, the index `go_to_slide` takes (from 0) and the id `inspect_slide` lists | `shape`, `text` |
+| deckcraft | an HTML preview of the slides first (Edit opens the editor): ribbon collapsed, task pane and notes closed, slide list at its narrowest. See [its README](extensions/deckcraft/README.md#compact-preview) | `slide<index>!<shape id>`, the index `go_to_slide` takes (from 0) and the id `inspect_slide` lists | `shape`, `text` |
 | wordcraft | ribbon, quick access toolbar and navigation pane hidden, interface 125% | the `{"anchor": Pos, "focus": Pos}` JSON that `execute select.range` takes | `paragraph` (a caret), `text` |
 | figcraft | left panel closed, interface minimized (it already shows one panel at a time below its narrow width) | the node id that `get_node` takes | `node`, `text` |
 | vectorcraft | VectorCraft's own Touch workspace | the node id, for the control channel (the web build lists no MCP tools) | `element` |
@@ -89,7 +91,7 @@ Gaps that need a change in the upstream app:
 - GridCraft always has an active cell, so it reports `null` only when no workbook is open.
 - VectorCraft has no agent tools on wasm, so its selection address cannot be checked against an MCP tool. `verify.mjs` checks it against `document.inspect` on the control channel.
 
-`scripts/verify-compact.mjs` holds the scenarios every `verify.mjs` runs at 390x844 with CDP touch events: compact against regular screenshots, a one-finger drag, a tap that selects, the address in the app's own tool, clearing the selection, and an `init` without `layout`.
+`scripts/verify-compact.mjs` holds the scenarios every `verify.mjs` runs at 390x844 (an optional `afterOpen` hook lets an extension that opens a preview first press Edit) with CDP touch events: compact against regular screenshots, a one-finger drag, a tap that selects, the address in the app's own tool, clearing the selection, and an `init` without `layout`.
 
 ## CI and releases
 

@@ -1,7 +1,7 @@
 {
   "id": "deckcraft",
   "name": "DeckCraft",
-  "version": "0.15.1",
+  "version": "0.16.0",
   "extensionApi": 1,
   "contributes": {
     "fileEditors": [
