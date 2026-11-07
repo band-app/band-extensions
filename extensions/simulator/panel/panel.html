@@ -44,6 +44,13 @@
       button[hidden] { display: none; }
       .icon { width: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center; flex: none; }
 
+      /* Offers: a device started that no pane shows. Never blocks the panes. */
+      #offers { flex: none; display: flex; flex-direction: column; border-bottom: 1px solid var(--border); background: var(--accent); }
+      #offers[hidden] { display: none; }
+      .offer { display: flex; align-items: center; gap: 8px; padding: 4px 8px; min-width: 0; }
+      .offer + .offer { border-top: 1px solid var(--border); }
+      .offer-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
       /* The canvas: nested splits around panes. */
       #canvas { flex: 1; min-height: 0; display: flex; }
       .split { flex: 1; min-width: 0; min-height: 0; display: flex; }
@@ -113,6 +120,7 @@
     </style>
   </head>
   <body data-layout="regular">
+    <div id="offers" data-testid="sim-offers" role="region" aria-label="Devices that started" hidden></div>
     <div id="canvas" data-testid="sim-canvas"></div>
 
     <template id="pane-tpl">

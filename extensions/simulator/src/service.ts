@@ -1,14 +1,13 @@
-import { realpath } from "node:fs/promises";
-import { sep } from "node:path";
 import { setStateDir } from "./config.ts";
 import { AndroidBackend } from "./android.ts";
 import { Fleet, UnknownDevice } from "./fleet.ts";
 import { IosBackend } from "./ios.ts";
-import { deviceIds } from "./layout.ts";
+import { type DeviceRef, deviceIds, emptyLayout, type LayoutNode, panes } from "./layout.ts";
 import { defineWorkerService, type ServiceStream, type WorkerServiceDefinition } from "./sdk/index.mjs";
 import { LayoutStore } from "./store.ts";
 import type { ScreenStream } from "./stream.ts";
 import type { Platform, SimDevice } from "./types.ts";
+import { pickPane, Watchers } from "./watch.ts";
 
 function obj(params: unknown): Record<string, unknown> {
   return typeof params === "object" && params !== null ? (params as Record<string, unknown>) : {};
@@ -27,21 +26,16 @@ function optStr(params: unknown, key: string): string | undefined {
   return v;
 }
 
-function num(params: unknown, key: string): number {
-  const v = obj(params)[key];
-  if (typeof v !== "number" || !Number.isFinite(v)) throw new Error(`${key} must be a number`);
-  return v;
-}
-
 /**
- * The simulator as a worker service. The Simulator tab is a canvas of panes, each showing one
- * iOS simulator or Android emulator the person picked or created. Band creates nothing on its
- * own. Agent tools act on the device they name, or else on the device in the pane the person
- * focused last.
+ * The simulator as a worker service. The Simulator tab is a viewer: a canvas of panes, each
+ * showing one iOS simulator or Android emulator. A person picks or creates a device in a pane,
+ * and an agent or script calls `show` to put the device it ran on in a pane. Band creates nothing
+ * on its own, and runs no app: agents use simctl, adb and their own test tools for that.
  */
 const ios = new IosBackend();
 const fleet = new Fleet({ ios, android: new AndroidBackend() });
 const store = new LayoutStore();
+const watchers = new Watchers(() => fleet.list());
 
 /** One open screen stream: a pane of a worktree's tab. */
 interface View {
@@ -81,6 +75,21 @@ class NeedDevice extends Error {}
 const summary = (d: SimDevice) =>
   `${d.name} (${d.os}${d.model && d.model !== d.name ? `, ${d.model}` : ""}, ${d.state === "on" ? "on" : d.state === "booting" ? "booting" : "off"}) id ${d.id}`;
 
+async function deviceListMessage(): Promise<string> {
+  const list = await fleet.list();
+  return `Devices on this worker:\n${list.length ? list.map((d) => `- ${summary(d)}`).join("\n") : "- none found"}`;
+}
+
+/** The `show` answer: which pane has the device, and whether an open tab switched to it. */
+function reply(text: string) {
+  return { content: [{ type: "text", text }] };
+}
+
+function setPaneDevice(node: LayoutNode, paneId: string, device: DeviceRef): LayoutNode {
+  if (node.type === "pane") return node.id === paneId ? { ...node, device } : node;
+  return { ...node, a: setPaneDevice(node.a, paneId, device), b: setPaneDevice(node.b, paneId, device) };
+}
+
 async function needDeviceMessage(): Promise<string> {
   const list = await fleet.list();
   const lines = list.length ? list.map((d) => `- ${summary(d)}`).join("\n") : "- none found";
@@ -103,35 +112,7 @@ async function target(params: unknown, worktreeKey: string): Promise<SimDevice> 
   }
 }
 
-/** Runs a tool call on its device, turned on first, and answers with the device list when there is none. */
-function onDevice<T>(
-  work: (device: SimDevice, params: unknown, scope: { worktreeKey: string; worktreePath: string }) => Promise<T>,
-) {
-  return async (params: unknown, scope: { worktreeKey: string; worktreePath: string }) => {
-    try {
-      return await fleet.exclusive(async () => {
-        const device = await fleet.ensureOn(await target(params, scope.worktreeKey));
-        return work(device, params, scope);
-      });
-    } catch (err) {
-      if (err instanceof NeedDevice) return { content: [{ type: "text", text: err.message }] };
-      throw err;
-    }
-  };
-}
-
 const ok = { ok: true };
-
-async function insideWorktree(path: string, worktreePath: string, ext: string): Promise<string> {
-  const real = await realpath(path).catch(() => {
-    throw new Error(`${path} does not exist`);
-  });
-  const wt = await realpath(worktreePath);
-  if (!real.startsWith(wt + sep) || !real.endsWith(ext)) {
-    throw new Error(`path must be an ${ext} ${ext === ".app" ? "folder" : "file"} inside this worktree`);
-  }
-  return real;
-}
 
 const SWEEP_EVERY_MS = 24 * 3600_000;
 let sweepTimer: NodeJS.Timeout | undefined;
@@ -251,62 +232,63 @@ defineWorkerService(withFolders({
       return { focused: focusedId(worktreeKey), devices };
     },
 
-    status: onDevice(async (device) => {
-      const screen = await fleet.backend(device).screen(device);
-      return { device, screen };
-    }),
+    /** The device the tools mean, whether it is on, and its screen size. Turns nothing on. */
+    async status(params, { worktreeKey }) {
+      try {
+        const device = await target(params, worktreeKey);
+        const screen = device.state === "on" ? await fleet.backend(device).screen(device) : null;
+        return { device, screen };
+      } catch (err) {
+        if (err instanceof NeedDevice) return { content: [{ type: "text", text: err.message }] };
+        throw err;
+      }
+    },
 
-    /** Answers with an image block, which Band passes to the agent as an image, and a short text block. */
-    screenshot: onDevice(async (device) => {
-      const shot = await fleet.backend(device).screenshot(device);
-      const unit = device.platform === "ios" ? "points: pixels divided by scale" : "pixels";
-      return {
-        content: [
-          {
-            type: "text",
-            text: `${device.name}: screenshot ${shot.width}x${shot.height} pixels, scale ${shot.scale ?? "unknown"}. Coordinates for simulator_tap are in ${unit}.`,
-          },
-          { type: "image", data: shot.data.toString("base64"), mimeType: shot.mimeType },
-        ],
-      };
-    }),
+    /**
+     * Puts a device in a pane of this worktree's saved layout: the pane focused last, else the
+     * first pane, else a new single-pane layout. An open Simulator tab switches over `events`.
+     * An unknown device is a tool error that lists the devices.
+     */
+    async show(params, { worktreeKey, worktreePath }) {
+      const wanted = str(params, "device");
+      let device: SimDevice;
+      try {
+        device = await fleet.find(wanted);
+      } catch (err) {
+        if (!(err instanceof UnknownDevice)) throw err;
+        throw new Error(`${err.message}\n${await deviceListMessage()}`);
+      }
+      const ref: DeviceRef = { id: device.id, platform: device.platform, name: device.name };
+      const saved = (await store.get(worktreeKey, worktreePath)).layout ?? emptyLayout();
+      const list = panes(saved);
+      const already = list.find((p) => p.device?.id === device.id);
+      const open = watchers.isOpen(worktreeKey);
+      const where = (id: string) => `pane ${list.findIndex((p) => p.id === id) + 1} of ${list.length}`;
+      if (already) {
+        return reply(`${device.name} is already shown in ${where(already.id)} of the Simulator tab.`);
+      }
+      const paneId = pickPane(saved, watchers.focusPane(worktreeKey), focusedId(worktreeKey));
+      const layout = setPaneDevice(saved, paneId, ref);
+      await store.save(worktreeKey, worktreePath, layout);
+      watchers.push(worktreeKey, { type: "show", paneId, device: ref, layout });
+      return reply(
+        `Showing ${device.name} in ${where(paneId)} of the Simulator tab. ${open ? "The open tab switched to it." : "The tab shows it when it opens."}`,
+      );
+    },
 
-    describe: onDevice((device) => fleet.backend(device).describe(device)),
-
-    tap: onDevice(async (device, params) => {
-      await fleet.backend(device).tap(device, num(params, "x"), num(params, "y"));
-      return ok;
-    }),
-
-    type: onDevice(async (device, params) => {
-      await fleet.backend(device).type(device, str(params, "text"));
-      return ok;
-    }),
-
-    button: onDevice(async (device, params) => {
-      await fleet.backend(device).button(device, str(params, "button"));
-      return ok;
-    }),
-
-    openUrl: onDevice(async (device, params) => {
-      const url = str(params, "url");
-      if (url.startsWith("-")) throw new Error("url must not start with -");
-      await fleet.backend(device).openUrl(device, url);
-      return ok;
-    }),
-
-    install: onDevice(async (device, params, { worktreePath }) => {
-      const backend = fleet.backend(device);
-      const real = await insideWorktree(str(params, "path"), worktreePath, backend.installExt);
-      await backend.install(device, real);
-      return ok;
-    }),
-
-    launch: onDevice(async (device, params) => {
-      const id = str(params, "bundleId");
-      if (id.startsWith("-")) throw new Error("bundleId must not start with -");
-      return { output: await fleet.backend(device).launch(device, id) };
-    }),
+    /**
+     * What the open tab polls about every 2 seconds: layout changes made by `show`, and offers
+     * for devices that started. `since` is the last `seq` seen; `focus` is the focused pane's id
+     * and `shown` the device ids in the panes. The poll is also how the service knows a tab is open.
+     */
+    async events(params, { worktreeKey }) {
+      const p = obj(params);
+      return watchers.poll(worktreeKey, {
+        since: typeof p.since === "number" ? p.since : undefined,
+        focus: typeof p.focus === "string" ? p.focus : null,
+        shown: Array.isArray(p.shown) ? p.shown.filter((x): x is string => typeof x === "string") : [],
+      });
+    },
   },
 
   streams: {

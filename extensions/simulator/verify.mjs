@@ -41,6 +41,10 @@ window.svc = {
   from: null,
   saves: [],
   creates: [],
+  seq: 0,
+  queue: [],
+  polls: [],
+  shows: [],
   androidReady: true,
   devices: [
     { id: "ios:U-MINE", platform: "ios", name: "iPhone 15", state: "off", os: "iOS 17.5", model: "iPhone 15", owned: false },
@@ -92,6 +96,12 @@ window.frame = (theme) => {
         let result = {};
         const s = window.svc;
         if (m.method === "layout") result = { layout: s.layout, from: s.from };
+        if (m.method === "events") { s.polls.push(m.params); result = { seq: s.seq, events: s.queue.splice(0) }; }
+        if (m.method === "show") {
+          s.shows.push(m.params);
+          const d = [...s.devices, ...(s.created ?? [])].find((x) => x.id === m.params.device);
+          s.queue.push({ seq: ++s.seq, type: "show", paneId: "p1", device: { id: d.id, platform: d.platform, name: d.name } });
+        }
         if (m.method === "saveLayout") { s.layout = m.params.layout; s.saves.push(m.params.layout); }
         if (m.method === "devices") result = { devices: [...s.devices, ...(s.created ?? [])], platforms: { ios: { ok: true }, android: s.androidReady ? { ok: true } : { ok: false, reason: "The Android SDK was not found. Set ANDROID_HOME." } } };
         if (m.method === "options") result = {
@@ -308,6 +318,42 @@ await tab.evaluate(() => { window.svc.from = "repo"; });
 f = await reload(DARK);
 panes = await paneInfo(f);
 check("S5 a layout from the repo opens like a saved one", panes.length === 2 && panes.every((p) => p.phase === "live"));
+
+// Agents and offers: `show` events switch a pane without a reload; a started device is only offered.
+const queueEvent = (ev) => tab.evaluate((e) => window.svc.queue.push({ ...e, seq: ++window.svc.seq }), ev);
+const offerBar = (f) => f.evaluate(() => [...document.querySelectorAll("#offers .offer")].map((o) => o.querySelector(".offer-text").textContent));
+await sleep(2300);
+const polls = await tab.evaluate(() => window.svc.polls);
+check("events: the open tab polls with its focused pane and shown devices", polls.length >= 2 && polls.at(-1).focus && Array.isArray(polls.at(-1).shown) && polls.at(-1).shown.length === 2, JSON.stringify(polls.at(-1)));
+const opensBefore = (await opens()).length;
+await queueEvent({ type: "show", paneId: "p2", device: { id: "ios:U-3", platform: "ios", name: "iPad Air" } });
+await sleep(2600);
+panes = await paneInfo(f);
+check("S2 a show event switches that pane to the device without a reload", panes.length === 2 && panes[1].name === "iPad Air" && panes[1].phase === "live" && panes[0].name === "band – iPhone 17 Pro", JSON.stringify(panes));
+check("S2 only the switched pane opened a new stream", (await opens()).slice(opensBefore).join() === "ios:U-3");
+check("S2 the pane draws the new device", near(await pixel(f, '.pane[data-pane="p2"]'), "#aa33aa"));
+await tab.screenshot({ path: join(out, "s2-show-switched.png") });
+
+await queueEvent({ type: "offer", device: { id: "android:avd:Pixel_6", platform: "android", name: "Pixel_6", os: "Android 14" } });
+await sleep(2600);
+check("S4 a started device is offered with Show and Dismiss", (await offerBar(f)).join() === "Pixel_6 started, show it?" && (await f.evaluate(() => !!document.querySelector("#offers .offer-show") && !!document.querySelector("#offers .offer-dismiss"))), JSON.stringify(await offerBar(f)));
+panes = await paneInfo(f);
+check("S4 the offer switches nothing on its own", panes[0].name === "band – iPhone 17 Pro" && panes[1].name === "iPad Air");
+await tab.screenshot({ path: join(out, "s4-offer.png") });
+await f.click("#offers .offer-dismiss");
+await sleep(200);
+check("S4 Dismiss hides the offer, and the panes stay", (await offerBar(f)).length === 0 && (await paneInfo(f))[1].name === "iPad Air");
+await queueEvent({ type: "offer", device: { id: "ios:U-MINE", platform: "ios", name: "iPhone 15", os: "iOS 17.5" } });
+await sleep(2600);
+check("S4 a second device gets its own offer", (await offerBar(f)).join() === "iPhone 15 started, show it?", JSON.stringify(await offerBar(f)));
+await f.click("#offers .offer-show");
+await sleep(1200);
+panes = await paneInfo(f);
+check("S4 Show asks the service to show the device and the pane switches", (await tab.evaluate(() => window.svc.shows.at(-1).device)) === "ios:U-MINE" && panes[0].name === "iPhone 15" && (await offerBar(f)).length === 0, JSON.stringify(panes));
+await queueEvent({ type: "offer", device: { id: "ios:U-3", platform: "ios", name: "iPad Air", os: "iOS 26.5" } });
+await sleep(2600);
+check("S4 a device a pane already shows is not offered", (await offerBar(f)).length === 0);
+await tab.screenshot({ path: join(out, "s4-after-show.png") });
 
 // Android: the picker explains a missing SDK and a missing system image.
 await f.click('.pane[data-pane="p2"] .picker');

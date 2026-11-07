@@ -9,10 +9,9 @@ import { mkdir, mkdtemp, open, readFile, rm, writeFile } from "node:fs/promises"
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { config, getStateDir } from "./config.ts";
-import type { DescribedElement } from "./servesim.ts";
 import { Latest, type ScreenStream, streamProfile } from "./stream.ts";
 import { run, runBuffer } from "./tools.ts";
-import type { Backend, CreateSpec, DescribeResult, Screen, SimDevice } from "./types.ts";
+import type { Backend, CreateSpec, Screen, SimDevice } from "./types.ts";
 
 const ANDROID_VERSIONS: Record<number, string> = {
   26: "8.0", 27: "8.1", 28: "9", 29: "10", 30: "11", 31: "12", 32: "12L", 33: "13", 34: "14", 35: "15", 36: "16",
@@ -70,59 +69,6 @@ export function parseAvdConfig(ini: string): { api?: number; model?: string; tag
   };
 }
 
-const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
-function unescapeXml(s: string): string {
-  return s.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (_m, e: string) => {
-    if (e[0] === "#") {
-      const code = e[1] === "x" || e[1] === "X" ? Number.parseInt(e.slice(2), 16) : Number(e.slice(1));
-      return Number.isFinite(code) ? String.fromCodePoint(code) : "";
-    }
-    return ENTITIES[e.toLowerCase()] ?? "";
-  });
-}
-
-const round = (n: number) => Math.round(n * 10) / 10;
-
-/**
- * The elements of a `uiautomator dump` that say or do something, in reading order. Coordinates
- * are pixels, the unit of the Android tap tool.
- */
-export function parseUiautomator(output: string): DescribeResult {
-  const start = output.indexOf("<hierarchy");
-  const end = output.lastIndexOf("</hierarchy>");
-  if (start < 0 || end < 0) throw new Error("uiautomator returned no hierarchy");
-  const xml = output.slice(start, end);
-  const elements: DescribedElement[] = [];
-  let screen: Screen | null = null;
-  for (const m of xml.matchAll(/<node\b([^>]*)>/g)) {
-    const attrs: Record<string, string> = {};
-    for (const a of (m[1] as string).matchAll(/([\w:-]+)="([^"]*)"/g)) attrs[a[1] as string] = unescapeXml(a[2] as string);
-    const b = /\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]/.exec(attrs.bounds ?? "");
-    if (!b) continue;
-    const [x1, y1, x2, y2] = [Number(b[1]), Number(b[2]), Number(b[3]), Number(b[4])] as [number, number, number, number];
-    const width = x2 - x1;
-    const height = y2 - y1;
-    if (!screen) screen = { width, height };
-    const text = attrs.text?.trim() || undefined;
-    const desc = attrs["content-desc"]?.trim() || undefined;
-    const label = text ?? desc;
-    const id = attrs["resource-id"]?.trim() || undefined;
-    const cls = attrs.class ?? "";
-    const interactive = attrs.clickable === "true" || attrs.checkable === "true" || /EditText$/.test(cls);
-    if (width <= 0 || height <= 0 || !(label || interactive)) continue;
-    elements.push({
-      type: cls.split(".").pop() || "View",
-      ...(label ? { label } : {}),
-      ...(text && desc && desc !== text ? { value: desc } : {}),
-      ...(id ? { id } : {}),
-      enabled: attrs.enabled !== "false",
-      frame: { x: x1, y: y1, width, height },
-      center: { x: round(x1 + width / 2), y: round(y1 + height / 2) },
-    });
-  }
-  return { screen, elements };
-}
-
 /** Text for `adb shell input text`: spaces become %s and the shell sees it as one quoted word. */
 export function inputTextArg(text: string): string {
   if (!/^[\x20-\x7e]+$/.test(text)) throw new Error("Only printable ASCII can be typed on Android");
@@ -141,9 +87,6 @@ const KEYCODES: Record<string, number> = {
   Escape: 111,
 };
 export const ANDROID_BUTTONS = ["HOME", "BACK", "APP_SWITCH", "LOCK", "SIDE_BUTTON"];
-
-/** The text that goes to the shell on the device for a quoted argument. */
-const shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
 export interface Sdk {
   adb: string | null;
@@ -250,7 +193,6 @@ export function installedImages(root: string): ImageOption[] {
 /** Android emulators through the SDK's emulator and adb. A phone plugged into adb is listed too. */
 export class AndroidBackend implements Backend {
   readonly platform = "android" as const;
-  readonly installExt = ".apk";
   private readonly children = new Map<string, ChildProcess>();
   private readonly screens = new Set<{ close(): void }>();
 
@@ -339,6 +281,7 @@ export class AndroidBackend implements Backend {
         platform: "android",
         name,
         state: live ? (live.booted ? "on" : "booting") : "off",
+        ...(live ? { serial: live.serial } : {}),
         model: info.model,
         os: info.api ? androidLabel(info.api) : "Android",
         owned: name.startsWith(owned),
@@ -348,6 +291,7 @@ export class AndroidBackend implements Backend {
       if (r.serial.startsWith("emulator-")) continue;
       out.push({
         id: serialId(r.serial),
+        serial: r.serial,
         platform: "android",
         name: r.model ?? r.serial,
         state: r.booted ? "on" : "booting",
@@ -518,64 +462,6 @@ export class AndroidBackend implements Backend {
       timeoutMs: 20_000,
       env: sdkEnv(findSdk()),
     });
-  }
-
-  async screenshot(device: SimDevice) {
-    const data = await this.png(await this.serialOf(device));
-    if (data.length < 24 || data.readUInt32BE(0) !== 0x89504e47) throw new Error("screencap did not return a PNG");
-    const width = data.readUInt32BE(16);
-    const height = data.readUInt32BE(20);
-    if (data.length > 4_500_000) {
-      const jpeg = await toJpeg(data, 1);
-      return { data: jpeg, mimeType: "image/jpeg" as const, width, height, scale: 1 };
-    }
-    return { data, mimeType: "image/png" as const, width, height, scale: 1 };
-  }
-
-  async describe(device: SimDevice): Promise<DescribeResult> {
-    const serial = await this.serialOf(device);
-    const { stdout } = await this.adb(serial, ["exec-out", "uiautomator", "dump", "/dev/tty"], 60_000);
-    return parseUiautomator(stdout);
-  }
-
-  async tap(device: SimDevice, x: number, y: number) {
-    const serial = await this.serialOf(device);
-    const screen = await this.sizeOf(serial);
-    if (screen && (x < 0 || y < 0 || x > screen.width || y > screen.height)) {
-      throw new Error(`(${x}, ${y}) is outside the ${screen.width}x${screen.height} pixel screen`);
-    }
-    await this.adb(serial, ["shell", "input", "tap", String(Math.round(x)), String(Math.round(y))], 15_000);
-  }
-
-  async type(device: SimDevice, text: string) {
-    await this.adb(await this.serialOf(device), ["shell", "input", "text", inputTextArg(text)], 30_000);
-  }
-
-  async button(device: SimDevice, name: string) {
-    const code = KEYCODES[name];
-    if (code === undefined || !ANDROID_BUTTONS.includes(name)) {
-      throw new Error(`button must be one of ${ANDROID_BUTTONS.join(", ")} on Android`);
-    }
-    await this.adb(await this.serialOf(device), ["shell", "input", "keyevent", String(code)], 15_000);
-  }
-
-  async openUrl(device: SimDevice, url: string) {
-    const serial = await this.serialOf(device);
-    await this.adb(serial, ["shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", shq(url)], 30_000);
-  }
-
-  async install(device: SimDevice, path: string) {
-    await this.adb(await this.serialOf(device), ["install", "-r", "-t", path], 5 * 60_000);
-  }
-
-  async launch(device: SimDevice, id: string) {
-    if (!/^[A-Za-z0-9._$]+(\/[A-Za-z0-9._$]+)?$/.test(id)) throw new Error("id must be a package name, or package/activity");
-    const serial = await this.serialOf(device);
-    const args = id.includes("/")
-      ? ["shell", "am", "start", "-n", id]
-      : ["shell", "monkey", "-p", id, "-c", "android.intent.category.LAUNCHER", "1"];
-    const { stdout } = await this.adb(serial, args, 30_000);
-    return stdout.trim();
   }
 
   async rotate(device: SimDevice, orientation: string) {

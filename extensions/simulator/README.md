@@ -1,6 +1,6 @@
 # Simulator
 
-iOS simulators and Android emulators on a Mac worker, as a Band extension. A person watches and controls them in a Simulator tab opened from the center "+" menu: a canvas of up to 4 panes, each showing one device. Agents drive them with ten tools. This is the `simulator` plugin that Band used to bundle (`plugins/simulator`), moved onto Band's extension API: a worker service (`service.mjs`), a panel (`panel.html`) and tools declared in `band-extension.json`. Capture and input come from [serve-sim](https://www.npmjs.com/package/serve-sim) 0.1.47, shipped in the archive with `ws`.
+iOS simulators and Android emulators on a Mac worker, as a Band extension. A person watches and controls them in a Simulator tab opened from the center "+" menu: a canvas of up to 4 panes, each showing one device. Agents and scripts run their apps with their own tools and show the device they used with `simulator_show`. This is the `simulator` plugin that Band used to bundle (`plugins/simulator`), moved onto Band's extension API: a worker service (`service.mjs`), a panel (`panel.html`) and tools declared in `band-extension.json`. Capture and input come from [serve-sim](https://www.npmjs.com/package/serve-sim) 0.1.47, shipped in the archive with `ws`.
 
 ## Requirements
 
@@ -39,22 +39,27 @@ Every key is optional. The old variables still apply when the service runs outsi
 
 ## Tools
 
-`simulator_devices` lists every device and the one the tab has focused. `simulator_status`, `simulator_screenshot`, `simulator_describe`, `simulator_tap`, `simulator_type`, `simulator_button`, `simulator_open_url`, `simulator_install` and `simulator_launch` act on one device.
+The tab is a viewer. Run apps with your own tools: `xcrun simctl`, `xcodebuild`, Expo, `adb`, Maestro. The extension no longer taps, types, installs, launches or takes screenshots for you.
 
-Every tool takes an optional `device` (an id such as `ios:<udid>` or `android:avd:Pixel_8`, or a device name). Without it the tool acts on the device in the pane of this worktree's tab that was focused last. With neither a `device` nor an open pane, the tool answers with the list of devices and how to pick one. It creates nothing. The service sets no `SIMULATOR_UDID` or `ANDROID_SERIAL` variable in the worktree.
+- `simulator_devices` lists every device and the one the tab has focused.
+- `simulator_status` answers with one device's state and screen size. It turns nothing on.
+- `simulator_show` puts a device in this worktree's tab.
 
-| | iOS | Android |
-|---|---|---|
-| Coordinates | points (pixels divided by the screenshot's scale) | pixels |
-| `describe` | accessibility tree from serve-sim | `uiautomator dump` |
-| `button` | `HOME`, `LOCK`, `SIDE_BUTTON`, `SIRI` | `HOME`, `BACK`, `APP_SWITCH`, `LOCK`, `SIDE_BUTTON` |
-| `install` | an `.app` folder inside the worktree | an `.apk` file inside the worktree |
-| `launch` | a bundle id | a package name, or `package/activity` |
-| `type` | any text | printable ASCII |
+**For agents.** After you boot a simulator or emulator, or install or launch an app on one, call `simulator_show` with its UDID or adb serial. Find it with `xcrun simctl list devices booted` or `adb devices`. From a shell, run `band tools call simulator_show --json '{"device":"<id>"}'`. The person then sees the device you used.
+
+`device` is an id (`ios:<udid>`, `android:avd:Pixel_8`), a raw iOS UDID, the adb serial of a running emulator (`emulator-5554`) or a device name. An unknown device is a tool error that lists the devices. `status` takes the same `device`, or else uses the device in the pane focused last.
+
+`show` writes the worktree's saved layout. The device goes in the pane focused last, else the first pane, else a new single-pane layout when nothing is saved. A device that a pane already shows stays where it is. The answer says which pane ("pane 2 of 3"). An open tab switches that pane without a reload.
+
+### Offers
+
+While the tab is open it polls the service's `events` call every 2 seconds. That poll is the only thing that makes the service read the device list (`simctl list`, `adb devices`), at most once every 2 seconds for all tabs, and nothing runs when no tab is open. When a device that no pane shows goes from off to on, the tab shows a bar "<name> started, show it?" with Show and Dismiss. Show calls `show`. Dismiss hides the offer until the device turns off and on again. The tab never switches a pane on its own.
+
+The service cannot see which app path an install used (`simctl install` and `adb install` copy the app into the device), so there is no offer on install. The start of a device is the only trigger. An agent that installs onto a device that was already on should call `simulator_show`.
 
 ## Android
 
-The Android backend (`src/android.ts`) boots an AVD with `emulator -avd <name> -no-window` and waits for `sys.boot_completed`. Discovery, input, install and the uiautomator tree follow the approach of [Orca](https://github.com/stablyai/orca)'s emulator code (MIT License, Copyright (c) 2026 Lovecast Inc.). No Orca source is copied, so no notice travels with it.
+The Android backend (`src/android.ts`) boots an AVD with `emulator -avd <name> -no-window` and waits for `sys.boot_completed`. Discovery and the stream's input follow the approach of [Orca](https://github.com/stablyai/orca)'s emulator code (MIT License, Copyright (c) 2026 Lovecast Inc.). No Orca source is copied, so no notice travels with it.
 
 The stream is not scrcpy. The service polls `adb exec-out screencap -p`, turns each PNG into a JPEG with `sips` and sends it as it does on iOS, which gives about 3 to 5 frames a second. Input is `adb shell input` (tap, swipe, keyevent, text), so a drag becomes one swipe when the finger lifts. scrcpy would give 30 frames a second and live drags, at the price of downloading and deploying scrcpy's server jar to each device. That is a follow-up if the frame rate matters.
 
@@ -71,8 +76,6 @@ Band adds a `profile` to the params of every stream it opens. With `"direct"` (t
 - One device per worktree, cloned from a base device, is gone. The person picks or creates devices, and the layout is remembered.
 - The service gets no `BAND_*` variable. Settings come from `config.json` (above).
 - There is no "Open simulator" button on a tool call in the chat, no `band simulators open`, and no "Reveal in Simulator.app". The Simulator tab opens from the "+" menu. These were dropped on purpose.
-
-`simulator_screenshot` answers with an image block and a short text block with the pixel size and the scale, as the bundled plugin did.
 
 ## The panel
 

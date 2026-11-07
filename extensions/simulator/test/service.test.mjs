@@ -4,11 +4,12 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
+import { readFileSync as read } from "node:fs";
 import { encodeStreamFrame, StreamFrameReader } from "../src/sdk/protocol.mjs";
 import { makeAndroidSdk, script } from "./fakes.mjs";
 
 // The real service process, speaking Band's stdio protocol, with stand-ins for xcrun, adb,
-// emulator and avdmanager. It shows which device an agent tool acts on.
+// emulator and avdmanager. It checks `show`, the tools that remain, and what an open tab is told.
 const dir = mkdtempSync(join(tmpdir(), "sim-service-"));
 const PREFIX = `band-test-${Math.floor(Date.now() / 1000).toString(36)}-${process.pid}`;
 const droid = makeAndroidSdk(join(dir, "droid"), ["Pixel_8", "Pixel_6"]);
@@ -90,6 +91,37 @@ after(async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+const p = (id, device = null) => ({ type: "pane", id, device });
+const ref = (id, platform, name) => ({ id, platform, name });
+const PIXEL8 = ref("android:avd:Pixel_8", "android", "Pixel_8");
+const text = (res) => res.content[0].text;
+const setState = (entries) => writeFileSync(droid.stateFile, JSON.stringify(entries));
+const manifest = JSON.parse(read(new URL("../band-extension.json", import.meta.url), "utf8"));
+
+describe("the manifest", () => {
+  it("contributes exactly devices, status and show, each backed by a method the service has", async () => {
+    const tools = manifest.contributes.tools;
+    assert.deepEqual(tools.map((t) => t.name), ["devices", "status", "show"]);
+    // The service's method table: the three methods answer, the removed ones do not exist.
+    assert.deepEqual(tools.map((t) => t.method), ["list", "status", "show"]);
+    await call("list");
+    await call("status");
+    await assert.rejects(call("show", { device: "nothing" }), /No device has the id or name/);
+    for (const gone of ["tap", "type", "button", "openUrl", "install", "launch", "describe", "screenshot"]) {
+      await assert.rejects(call(gone, {}), /./, gone);
+    }
+  });
+
+  it("tells an agent to call simulator_show after booting, installing or launching", () => {
+    const show = manifest.contributes.tools.find((t) => t.name === "show").description;
+    assert.match(show, /After you boot a simulator or emulator, or install or launch an app on one, call simulator_show/);
+    assert.match(show, /xcrun simctl list devices booted/);
+    assert.match(show, /adb devices/);
+    assert.match(show, /band tools call simulator_show --json/);
+    assert.match(read(new URL("../README.md", import.meta.url), "utf8"), /band tools call simulator_show --json/);
+  });
+});
+
 describe("the service", () => {
   it("lists the devices of both platforms and says none is focused", async () => {
     const res = await call("list");
@@ -97,81 +129,90 @@ describe("the service", () => {
     assert.deepEqual(res.devices.map((d) => d.id).sort(), ["android:avd:Pixel_6", "android:avd:Pixel_8", "ios:U-MINE"]);
   });
 
-  it("with no device named and no pane open, a tool answers with the list and creates and boots nothing", async () => {
-    const res = await call("screenshot");
-    const text = res.content[0].text;
-    assert.match(text, /No device is open in this worktree's Simulator tab/);
-    assert.match(text, /Pass `device`/);
-    assert.match(text, /android:avd:Pixel_8/);
-    assert.match(text, /ios:U-MINE/);
+  it("with no device named and no pane open, status answers with the list and boots nothing", async () => {
+    const res = await call("status");
+    assert.match(text(res), /No device is open in this worktree's Simulator tab/);
+    assert.match(text(res), /android:avd:Pixel_8/);
     assert.deepEqual(adbLog(), []);
-    assert.equal(JSON.parse(readFileSync(droid.stateFile, "utf8")).length, 0);
   });
 
-  it("stores the canvas and restores it, and refuses more than 4 panes", async () => {
+  it("show with an unknown device is an error that lists the devices", async () => {
+    await assert.rejects(call("show", { device: "nope" }), (e) => /No device has the id or name "nope"/.test(e.message) && /Devices on this worker/.test(e.message) && /ios:U-MINE/.test(e.message) && /android:avd:Pixel_6/.test(e.message));
     assert.deepEqual(await call("layout"), { layout: null, from: null });
-    const layout = { type: "pane", id: "p1", device: { id: "android:avd:Pixel_8", platform: "android", name: "Pixel_8" } };
-    await call("saveLayout", { layout });
-    assert.deepEqual((await call("layout")).layout, layout);
-    const p = (id) => ({ type: "pane", id, device: null });
-    const s = (a, b) => ({ type: "split", dir: "row", ratio: 0.5, a, b });
-    await assert.rejects(call("saveLayout", { layout: s(s(p("a"), p("b")), s(p("c"), s(p("d"), p("e")))) }), /at most 4 panes/);
   });
 
-  it("a tool with `device` boots and acts on that device, found by name or by id", async () => {
-    clearLog();
-    await call("tap", { x: 10, y: 20, device: "pixel_8" });
-    assert.ok(adbLog().some((l) => l.startsWith("emulator -avd Pixel_8")));
-    assert.ok(adbLog().includes("emulator-5554 shell input tap 10 20"));
-    const tree = await call("describe", { device: "android:avd:Pixel_8" });
-    assert.deepEqual(tree.elements.map((e) => e.label), ["OK"]);
-    await assert.rejects(call("tap", { x: 1, y: 1, device: "no such device" }), /No device has the id or name/);
+  it("show with nothing saved makes a single-pane layout, and takes a UDID", async () => {
+    const res = await call("show", { device: "U-MINE" });
+    assert.match(text(res), /Showing iPhone 15 in pane 1 of 1 of the Simulator tab\. The tab shows it when it opens\./);
+    assert.deepEqual((await call("layout")).layout, p("p1", ref("ios:U-MINE", "ios", "iPhone 15")));
+    assert.match(text(await call("show", { device: "iPhone 15" })), /already shown in pane 1 of 1/);
   });
 
-  it("without `device` a tool acts on the pane focused last, and `device` still wins", { skip: !HAS_SIPS }, async () => {
-    await openStream(1, "android:avd:Pixel_8");
-    await until(() => hasFrame(1), "the first pane's frame");
-    assert.equal(texts(1).find((t) => t.type === "info").platform, "android");
-    clearLog();
-    await call("tap", { x: 1, y: 2 });
-    assert.deepEqual(adbLog(), ["emulator-5554 shell input tap 1 2"]);
-
-    await openStream(2, "android:avd:Pixel_6");
-    await until(() => hasFrame(2), "the second pane's frame");
-    // The second pane opened last, so it is the focused one until the person presses the first.
-    clearLog();
-    await call("tap", { x: 3, y: 4 });
-    assert.deepEqual(adbLog(), ["emulator-5556 shell input tap 3 4"]);
-
-    sendToStream(1, { type: "focus" });
-    await new Promise((r) => setTimeout(r, 300));
-    clearLog();
-    await call("tap", { x: 5, y: 6 });
-    await call("tap", { x: 7, y: 8, device: "Pixel_6" });
-    assert.deepEqual(adbLog(), ["emulator-5554 shell input tap 5 6", "emulator-5556 shell input tap 7 8"]);
-    assert.equal((await call("list")).focused, "android:avd:Pixel_8");
+  it("show takes an adb serial of a running emulator and the first pane when none is focused", async () => {
+    await call("saveLayout", { layout: { type: "split", dir: "row", ratio: 0.5, a: p("p1", ref("ios:U-MINE", "ios", "iPhone 15")), b: p("p2") } });
+    setState([{ serial: "emulator-5554", avd: "Pixel_8" }]);
+    const res = await call("show", { device: "emulator-5554" });
+    assert.match(text(res), /Showing Pixel_8 in pane 1 of 2/);
+    const layout = (await call("layout")).layout;
+    assert.deepEqual([layout.a.device.id, layout.b.device], ["android:avd:Pixel_8", null]);
+    setState([]);
   });
 
-  it("keyboard and touch from a pane reach only its own device", { skip: !HAS_SIPS }, async () => {
-    clearLog();
-    sendToStream(2, { type: "key", key: "Enter" });
-    sendToStream(1, { type: "button", name: "BACK" });
-    await until(() => adbLog().length >= 2, "the input");
-    assert.deepEqual(adbLog().sort(), ["emulator-5554 shell input keyevent 4", "emulator-5556 shell input keyevent 66"]);
-  });
-
-  it("turning a device off tells its pane, and closing the focused pane moves the focus", { skip: !HAS_SIPS }, async () => {
-    await call("shutdown", { device: "android:avd:Pixel_6" });
-    await until(() => texts(2).some((t) => t.type === "off"), "the off message");
-    await request("stream.close", { streamId: 2 });
-    clearLog();
-    await call("tap", { x: 9, y: 9 });
-    assert.deepEqual(adbLog(), ["emulator-5554 shell input tap 9 9"]);
-  });
-
-  it("with the last pane closed, a tool without `device` answers with the list again", async () => {
+  it("show uses the pane of the stream focused last", { skip: !HAS_SIPS }, async () => {
+    await call("saveLayout", { layout: { type: "split", dir: "row", ratio: 0.5, a: p("p1"), b: p("p2", PIXEL8) } });
+    await openStream(1, PIXEL8.id);
+    await until(() => hasFrame(1), "the pane's frame");
+    const res = await call("show", { device: "ios:U-MINE" });
+    assert.match(text(res), /Showing iPhone 15 in pane 2 of 2/);
+    assert.equal((await call("layout")).layout.b.device.id, "ios:U-MINE");
     await request("stream.close", { streamId: 1 });
-    const res = await call("tap", { x: 1, y: 1 });
-    assert.match(res.content[0].text, /No device is open/);
+  });
+});
+
+describe("what an open tab is told", () => {
+  const layout = { type: "split", dir: "row", ratio: 0.5, a: p("p1", ref("ios:U-MINE", "ios", "iPhone 15")), b: p("p2") };
+  const tab = (args = {}) => call("events", { shown: ["ios:U-MINE"], focus: "p1", ...args });
+
+  it("a show reaches the open tab as an event, in the pane the tab reported as focused", async () => {
+    await call("saveLayout", { layout });
+    const first = await tab({ focus: "p2" });
+    assert.deepEqual(first.events, []);
+    const res = await call("show", { device: "Pixel_6" });
+    assert.match(text(res), /Showing Pixel_6 in pane 2 of 2 of the Simulator tab\. The open tab switched to it\./);
+    const next = await tab({ since: first.seq, focus: "p2" });
+    assert.equal(next.events.length, 1);
+    assert.deepEqual([next.events[0].type, next.events[0].paneId, next.events[0].device.id], ["show", "p2", "android:avd:Pixel_6"]);
+    assert.equal(next.events[0].layout.b.device.id, "android:avd:Pixel_6");
+  });
+
+  it("a device that starts is offered once, never shown on its own, and withdrawn when it turns off", async () => {
+    await call("saveLayout", { layout });
+    setState([]);
+    await new Promise((r) => setTimeout(r, 2100));
+    let seen = await tab({ shown: ["ios:U-MINE"] });
+    await new Promise((r) => setTimeout(r, 2100));
+    setState([{ serial: "emulator-5554", avd: "Pixel_8" }]);
+    seen = await tab({ since: seen.seq });
+    assert.deepEqual(seen.events.map((e) => [e.type, e.device?.id]), [["offer", "android:avd:Pixel_8"]]);
+    assert.equal(seen.events[0].device.name, "Pixel_8");
+    assert.equal((await call("layout")).layout.b.device, null, "the layout is untouched");
+    await new Promise((r) => setTimeout(r, 2100));
+    const again = await tab({ since: seen.seq });
+    assert.deepEqual(again.events, [], "no second offer for the same run");
+    setState([]);
+    await new Promise((r) => setTimeout(r, 2100));
+    const off = await tab({ since: again.seq });
+    assert.deepEqual(off.events.map((e) => [e.type, e.id]), [["withdraw", "android:avd:Pixel_8"]]);
+  });
+
+  it("a device already shown in a pane is not offered", async () => {
+    setState([]);
+    await new Promise((r) => setTimeout(r, 2100));
+    let seen = await tab({ shown: ["android:avd:Pixel_8"] });
+    await new Promise((r) => setTimeout(r, 2100));
+    setState([{ serial: "emulator-5554", avd: "Pixel_8" }]);
+    seen = await tab({ since: seen.seq, shown: ["android:avd:Pixel_8"] });
+    assert.deepEqual(seen.events, []);
+    setState([]);
   });
 });
