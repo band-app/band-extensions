@@ -1,7 +1,7 @@
 // Copied from storytold/wordcraft apps/wordcraft-web/src/main.rs at rev ae5c65b9dd11 (MIT OR Apache-2.0,
 // see LICENSE-MIT and LICENSE-APACHE at the repo root).
 // Changes: dropped 'mod host', 'mod prefs' and 'mod save_fallback' and the `?host=parent` text, added
-// 'mod editor' and 'mod mcp', renamed the crate in messages.
+// 'mod editor', 'mod mcp' and 'mod preview', renamed the crate in messages.
 
 //! WordCraft in the browser.
 //!
@@ -19,6 +19,8 @@
 mod editor;
 #[cfg(target_arch = "wasm32")]
 mod mcp;
+#[cfg(target_arch = "wasm32")]
+mod preview;
 #[cfg(target_arch = "wasm32")]
 mod web;
 
