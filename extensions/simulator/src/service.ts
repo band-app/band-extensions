@@ -73,7 +73,7 @@ defineWorkerService({
     /** Every available iOS device, for the panel's picker, with the one this worktree acts on marked. */
     async devices(_params, { worktreeKey }) {
       const current = await devices.exclusive(() => devices.current(worktreeKey));
-      const list = await devices.listAll();
+      const list = (await devices.listAll()).map((d) => ({ ...d, group: devices.group(d, worktreeKey) }));
       return { current: current.udid, devices: list };
     },
 
@@ -218,14 +218,18 @@ defineWorkerService({
       void (async () => {
         try {
           stream.send(JSON.stringify({ type: "booting" }));
-          const device = await devices.exclusive(() => devices.ensureBooted(worktreeKey));
+          const device = await devices.exclusive(() =>
+            devices.ensureBooted(worktreeKey, (p) => {
+              if (!closed) stream.send(JSON.stringify({ type: "booting", ...p }));
+            }),
+          );
           const helper = await helpers.helper(device.udid);
           const screen = (await helpers.screen(device.udid)) ?? { width: 0, height: 0 };
           if (closed) return;
           live = openScreenStream(
             helper,
             helpers,
-            { ...screen, udid: device.udid, name: device.name },
+            { ...screen, udid: device.udid, name: device.name, model: device.model },
             // Band sets `profile`: "direct" for the desktop app on this machine (full size and
             // rate), "hub" when the hub carries the frames (half size, 15 fps at most).
             obj(params),

@@ -7,6 +7,18 @@ export interface Device {
   udid: string;
   name: string;
   state: string;
+  /** The hardware model, such as "iPhone 17 Pro", when simctl names the device type. */
+  model?: string;
+}
+
+/** What the service tells the panel while a device is made ready. */
+export type BootPhase = { phase: "creating" | "cloning" | "booting"; name?: string; model?: string };
+export type OnPhase = (phase: BootPhase) => void;
+
+/** "iPhone 17 Pro" from "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro". */
+export function modelFromType(identifier: string | undefined): string | undefined {
+  const m = /SimDeviceType\.(.+)$/.exec(identifier ?? "");
+  return m ? (m[1] as string).replace(/-/g, " ") : undefined;
 }
 
 /** A device the picker offers: Band's own or the person's. `runtime` is the iOS version, such as "26.5". */
@@ -16,10 +28,13 @@ export interface PickerDevice extends Device {
   owned: boolean;
 }
 
+/** Where the picker lists a device: this worktree's own, another worktree's, or the person's. */
+export type PickerGroup = "this" | "other" | "mine";
+
 interface SimctlDevices {
   devices: Record<
     string,
-    Array<{ udid: string; name: string; state: string; isAvailable?: boolean }>
+    Array<{ udid: string; name: string; state: string; isAvailable?: boolean; deviceTypeIdentifier?: string }>
   >;
 }
 
@@ -99,7 +114,12 @@ export class DeviceSet {
     return Object.values(parsed.devices)
       .flat()
       .filter((d) => d.isAvailable !== false && d.name.startsWith(owned))
-      .map(({ udid, name, state }) => ({ udid, name, state }));
+      .map(({ udid, name, state, deviceTypeIdentifier }) => ({
+        udid,
+        name,
+        state,
+        model: modelFromType(deviceTypeIdentifier),
+      }));
   }
 
   /**
@@ -117,10 +137,23 @@ export class DeviceSet {
       const runtime = (m[1] as string).replace(/-/g, ".");
       for (const d of list) {
         if (d.isAvailable === false || d.name === baseName()) continue;
-        out.push({ udid: d.udid, name: d.name, state: d.state, runtime, owned: d.name.startsWith(owned) });
+        out.push({
+          udid: d.udid,
+          name: d.name,
+          state: d.state,
+          model: modelFromType(d.deviceTypeIdentifier),
+          runtime,
+          owned: d.name.startsWith(owned),
+        });
       }
     }
     return out.sort((a, b) => a.name.localeCompare(b.name) || a.udid.localeCompare(b.udid));
+  }
+
+  /** The picker's group of a device for a worktree. */
+  group(d: PickerDevice, worktreeKey: string): PickerGroup {
+    if (d.name === deviceName(worktreeKey)) return "this";
+    return d.owned ? "other" : "mine";
   }
 
   private async loadSelection(): Promise<Map<string, string>> {
@@ -168,7 +201,7 @@ export class DeviceSet {
    * The device the worktree acts on: the one picked in the panel while it still exists, otherwise
    * the worktree's own device (cloned on first use).
    */
-  async current(worktreeKey: string): Promise<Device> {
+  async current(worktreeKey: string, onPhase?: OnPhase): Promise<Device> {
     const map = await this.loadSelection();
     const udid = map.get(worktreeKey);
     if (udid) {
@@ -177,7 +210,7 @@ export class DeviceSet {
       map.delete(worktreeKey);
       await this.saveSelection();
     }
-    return this.ensureDevice(worktreeKey);
+    return this.ensureDevice(worktreeKey, onPhase);
   }
 
   /** The newest available iOS runtime and the newest iPhone Pro it supports, unless the env names them. */
@@ -203,40 +236,43 @@ export class DeviceSet {
     return { type: chosen.identifier, runtime: runtime.identifier };
   }
 
-  private async baseDevice(): Promise<Device> {
+  private async baseDevice(onPhase?: OnPhase): Promise<Device> {
     const existing = (await this.list()).find((d) => d.name === baseName());
     if (existing) return existing;
+    onPhase?.({ phase: "creating" });
     const { type, runtime } = await this.pickBase();
     const { stdout } = await this.simctl(["create", baseName(), type, runtime]);
     return { udid: stdout.trim(), name: baseName(), state: "Shutdown" };
   }
 
   /** The worktree's device, cloned from the base device on first use. */
-  async ensureDevice(worktreeKey: string): Promise<Device> {
+  async ensureDevice(worktreeKey: string, onPhase?: OnPhase): Promise<Device> {
     const name = deviceName(worktreeKey);
     const found = (await this.list()).find((d) => d.name === name);
     if (found) return found;
-    const base = await this.baseDevice();
+    const base = await this.baseDevice(onPhase);
     if (base.state !== "Shutdown") await this.simctl(["shutdown", base.udid]);
+    onPhase?.({ phase: "cloning" });
     const { stdout } = await this.simctl(["clone", base.udid, name], 5 * 60_000);
-    return { udid: stdout.trim(), name, state: "Shutdown" };
+    return { udid: stdout.trim(), name, state: "Shutdown", model: base.model };
   }
 
   /**
    * Boots the worktree's device, first shutting down the least recently used booted devices until
    * there is room under the cap.
    */
-  async ensureBooted(worktreeKey: string): Promise<Device> {
-    return this.bootDevice(await this.current(worktreeKey));
+  async ensureBooted(worktreeKey: string, onPhase?: OnPhase): Promise<Device> {
+    return this.bootDevice(await this.current(worktreeKey, onPhase), onPhase);
   }
 
   /**
    * Boots a device. Only Band's own devices are shut down to make room; a device of the person's
    * counts for nothing and is never evicted.
    */
-  async bootDevice(device: Device): Promise<Device> {
+  async bootDevice(device: Device, onPhase?: OnPhase): Promise<Device> {
     this.lastUsed.set(device.udid, Date.now());
     if (device.state === "Booted") return device;
+    onPhase?.({ phase: "booting", name: device.name, model: device.model });
     const booted = (await this.list()).filter(
       (d) => d.state === "Booted" && d.udid !== device.udid && d.name !== baseName(),
     );

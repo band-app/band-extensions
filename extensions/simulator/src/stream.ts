@@ -218,7 +218,7 @@ const unit = (v: unknown): number | null =>
 export function openScreenStream(
   helper: Helper,
   helpers: ServeSimHelpers,
-  info: { width: number; height: number; udid: string; name: string },
+  info: { width: number; height: number; udid: string; name: string; model?: string },
   params: unknown = {},
 ): ScreenStream {
   const abort = new AbortController();

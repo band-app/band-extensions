@@ -5,9 +5,11 @@
 // {"type":"booting"} and {"type":"info"} and then one JPEG per frame. Input goes back as JSON
 // through "stream.send". Input is always on: Band has no Take control step for panels, so this page
 // ignores the "control" message. The toolbar calls the service (devices, select, shutdown, rotate)
-// with "call".
+// with "call". Pure helpers (shell geometry, theme tokens, picker groups) are in shell.js.
 (() => {
   "use strict";
+
+  const Shell = globalThis.BandSimShell;
 
   const STREAM_ID = "screen";
   /** Waits before each reconnect after the stream drops. A fourth drop stays closed. */
@@ -19,6 +21,7 @@
   const $ = (id) => document.getElementById(id);
   const canvas = $("screen");
   const ctx = canvas.getContext("2d");
+  const stage = $("stage");
 
   let port = null;
   let visible = true;
@@ -35,14 +38,20 @@
   let deviceList = [];
   /** True from the Power press that shuts the device down until it is turned on again. */
   let off = false;
+  /** True once a frame was drawn, so the canvas size is the device's screen size. */
+  let hasFrame = false;
+  let framed = true;
   let nextCall = 0;
   const calls = new Map();
 
   const STATUS = { connecting: "Connecting", booting: "Booting", live: "Connected", closed: "Disconnected", off: "Off" };
+  const BOOT_TEXT = { connecting: "Connecting\u2026", booting: "Booting\u2026" };
 
   function setPhase(phase, text) {
     document.body.dataset.phase = phase;
-    $("status").textContent = text ?? STATUS[phase] ?? phase;
+    $("status").textContent = STATUS[phase] ?? phase;
+    $("boot-text").textContent = text ?? BOOT_TEXT[phase] ?? "";
+    $("off").textContent = phase === "off" ? "Off" : phase === "closed" ? "Disconnected" : "";
     const live = phase === "live";
     $("home").disabled = !live;
     $("rotate").disabled = !live;
@@ -62,9 +71,103 @@
     });
   }
 
+  /** An error shows as an icon in the toolbar. Its text is in a popover the icon opens. */
   function showError(text) {
-    $("error").textContent = text;
-    $("error").hidden = !text;
+    $("error-pop").textContent = text;
+    $("error-wrap").hidden = !text;
+    if (!text) setErrorOpen(false);
+  }
+
+  function setErrorOpen(open) {
+    $("error-pop").hidden = !open;
+    $("error-btn").setAttribute("aria-expanded", String(open));
+  }
+
+  // The theme: Band's tokens set the panel's variables. Without a theme the page keeps the colors
+  // of its stylesheet.
+  function applyTheme(theme) {
+    const { vars, scheme } = Shell.themeVars(theme);
+    const root = document.documentElement;
+    for (const [name, value] of Object.entries(vars)) root.style.setProperty(name, value);
+    if (scheme) root.style.colorScheme = scheme;
+  }
+
+  // The frame toggle is remembered per device. Storage can throw (private windows), so the choice
+  // then lasts until the panel closes.
+  function frameKey(udid) {
+    return `sim-frame:${udid ?? "none"}`;
+  }
+
+  /** The choice per device for this session, used when storage is blocked (a sandbox without allow-same-origin). */
+  const framedInSession = new Map();
+
+  function loadFramed() {
+    const key = frameKey(current?.udid);
+    try {
+      return localStorage.getItem(key) !== "0";
+    } catch {
+      return framedInSession.get(key) ?? true;
+    }
+  }
+
+  function setFramed(value, save) {
+    framed = value;
+    if (save) {
+      framedInSession.set(frameKey(current?.udid), value);
+      try {
+        localStorage.setItem(frameKey(current?.udid), value ? "1" : "0");
+      } catch {
+        // Not remembered.
+      }
+    }
+    const toggle = $("frame-toggle");
+    toggle.setAttribute("aria-pressed", String(value));
+    toggle.title = value ? "Hide frame" : "Show frame";
+    toggle.setAttribute("aria-label", toggle.title);
+    relayout();
+  }
+
+  /** Sizes the shell and the screen to the room in <main>. Taps use the canvas's own rectangle, so they stay exact. */
+  function relayout() {
+    const main = document.querySelector("main");
+    const cs = getComputedStyle(main);
+    const avail = {
+      width: main.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight),
+      height: main.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom),
+    };
+    const screen = hasFrame ? { width: canvas.width, height: canvas.height } : Shell.DEFAULT_SCREEN;
+    const l = Shell.layout(avail, screen, framed);
+    const edge = l.button;
+    stage.dataset.framed = String(framed);
+    stage.style.width = `${l.shell.width + 2 * edge}px`;
+    stage.style.height = `${l.shell.height}px`;
+    const shell = $("shell");
+    shell.style.left = `${edge}px`;
+    shell.style.top = "0px";
+    shell.style.width = `${l.shell.width}px`;
+    shell.style.height = `${l.shell.height}px`;
+    shell.style.borderRadius = `${l.shellRadius}px`;
+    const box = $("screen-box");
+    box.style.left = `${edge + l.bezel}px`;
+    box.style.top = `${l.bezel}px`;
+    box.style.width = `${l.screen.width}px`;
+    box.style.height = `${l.screen.height}px`;
+    box.style.borderRadius = `${l.screenRadius}px`;
+    // Side buttons are drawn in portrait only: in landscape they would sit on the top and bottom edges.
+    const portrait = l.screen.height >= l.screen.width;
+    const bw = Math.max(2, edge);
+    const place = (id, left, top, height) => {
+      const el = $(id);
+      el.style.display = framed && portrait && edge > 0 ? "block" : "none";
+      el.style.left = `${left}px`;
+      el.style.top = `${Math.round(top * l.shell.height)}px`;
+      el.style.width = `${bw}px`;
+      el.style.height = `${Math.round(height * l.shell.height)}px`;
+    };
+    place("side-action", edge - bw, 0.14, 0.035);
+    place("side-up", edge - bw, 0.21, 0.07);
+    place("side-down", edge - bw, 0.3, 0.07);
+    place("side-power", edge + l.shell.width, 0.25, 0.11);
   }
 
   function deviceInfo(udid) {
@@ -74,6 +177,9 @@
   function renderDevice() {
     const name = current?.name ?? "iOS Simulator";
     $("device").textContent = name;
+    const wasFramed = framed;
+    const stored = loadFramed();
+    if (stored !== wasFramed) setFramed(stored, false);
     $("picker-name").textContent = name;
     const info = current ? deviceInfo(current.udid) : undefined;
     $("picker-version").textContent = info ? `iOS ${info.runtime}` : "";
@@ -116,9 +222,11 @@
         const bytes = pending;
         pending = null;
         const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/jpeg" }));
-        if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
+        if (!hasFrame || canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
           canvas.width = bitmap.width;
           canvas.height = bitmap.height;
+          hasFrame = true;
+          relayout();
         }
         ctx.drawImage(bitmap, 0, 0);
         bitmap.close();
@@ -159,6 +267,8 @@
       case "init":
         visible = m.visible !== false;
         document.body.dataset.layout = m.layout === "compact" ? "compact" : "regular";
+        if (m.theme) applyTheme(m.theme);
+        relayout();
         port.postMessage({ type: "ready" });
         openStream();
         break;
@@ -171,7 +281,7 @@
         if (m.id !== streamId) break;
         try {
           const info = JSON.parse(m.text);
-          if (info.type === "booting") setPhase("booting");
+          if (info.type === "booting") setPhase("booting", Shell.bootText(info));
           if (info.type === "info" && typeof info.name === "string") {
             current = { udid: info.udid, name: info.name };
             renderDevice();
@@ -208,6 +318,9 @@
       case "visible":
         visible = m.visible !== false;
         if (visible) void draw();
+        break;
+      case "theme":
+        applyTheme(m);
         break;
       case "layout":
         document.body.dataset.layout = m.layout === "compact" ? "compact" : "regular";
@@ -310,7 +423,32 @@
       menu.append(li);
       return;
     }
-    for (const d of deviceList) {
+    const own = deviceList.find((d) => d.group === "this");
+    if (own && current && own.udid !== current.udid) {
+      const use = document.createElement("li");
+      use.className = "use-own";
+      use.setAttribute("role", "option");
+      use.setAttribute("aria-selected", "false");
+      use.textContent = "Use this worktree's device";
+      use.addEventListener("click", () => {
+        closeMenu();
+        void choose(own);
+      });
+      menu.append(use);
+    }
+    for (const group of Shell.pickerGroups(deviceList)) {
+      const heading = document.createElement("li");
+      heading.className = "group";
+      heading.setAttribute("role", "presentation");
+      heading.dataset.group = group.key;
+      heading.textContent = group.label;
+      menu.append(heading);
+      for (const d of group.devices) menu.append(menuRow(d));
+    }
+  }
+
+  function menuRow(d) {
+    {
       const li = document.createElement("li");
       li.setAttribute("role", "option");
       li.dataset.udid = d.udid;
@@ -325,7 +463,7 @@
         closeMenu();
         void choose(d);
       });
-      menu.append(li);
+      return li;
     }
   }
 
@@ -343,7 +481,9 @@
     off = false;
     retries = 0;
     current = { udid: d.udid, name: d.name };
+    hasFrame = false;
     renderDevice();
+    relayout();
     openStream();
   }
 
@@ -355,11 +495,17 @@
     picker.setAttribute("aria-expanded", "true");
   });
   document.addEventListener("click", (e) => {
+    if (!$("error-pop").hidden && !$("error-wrap").contains(e.target)) setErrorOpen(false);
     if (!menu.hidden && !$("picker-wrap").contains(e.target)) closeMenu();
   });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closeMenu();
   });
+
+  $("frame-toggle").addEventListener("click", () => setFramed(!framed, true));
+  $("error-btn").addEventListener("click", () => setErrorOpen($("error-pop").hidden));
+  new ResizeObserver(relayout).observe(document.querySelector("main"));
+  relayout();
 
   $("reconnect").addEventListener("click", () => {
     retries = 0;
