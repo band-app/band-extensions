@@ -8,7 +8,7 @@
 # generator reads), tools.json, the web build (each .wasm and .js with a .gz copy, also inside
 # folders such as snippets/, and a .br copy when `brotli` is installed), LICENSE-MIT, LICENSE-APACHE and NOTICE.
 # An extension with a package.json instead of a Cargo workspace (simulator) builds with
-# `npm ci && node build.mjs` and has no tools.json, because its manifest declares the tools.
+# `npm ci && node build.mjs` and has no tools.json (a language server extension builds node_modules/ only), because its manifest declares the tools.
 # SKIP_BUILD=1 reuses extensions/<ext>/dist/web instead of building it.
 set -euo pipefail
 
@@ -35,7 +35,8 @@ if [ "${SKIP_BUILD:-}" != "1" ]; then
 fi
 build="$src/dist/web"
 if [ "$node_ext" = 1 ]; then
-  [ -f "$build/service.mjs" ] || { echo "no $build/service.mjs: build first" >&2; exit 1; }
+  # A worker service builds service.mjs. A language server extension ships npm packages instead.
+  [ -f "$build/service.mjs" ] || [ -d "$build/node_modules" ] || { echo "no $build/service.mjs or node_modules: build first" >&2; exit 1; }
 else
   [ -f "$build/index.html" ] || { echo "no $build/index.html: build first" >&2; exit 1; }
 fi
