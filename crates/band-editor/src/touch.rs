@@ -13,10 +13,6 @@
 //! - A gesture with two fingers passes through untouched as touch events, but its pointer events
 //!   are swallowed, so two fingers do nothing in compact mode.
 //!
-//! An element with the attribute `data-native-touch`, and everything inside it, is left alone: its
-//! touches reach the page unchanged, so an HTML view drawn over the canvas (a preview) scrolls,
-//! zooms and takes taps natively.
-//!
 //! The events the shim creates are not trusted events, and the shim lets those through to eframe.
 //! Dispatching one runs the shim's own listener again, so the listener is an `Fn`, not an `FnMut`.
 
@@ -76,7 +72,7 @@ impl TouchShim {
             let st = state.clone();
             let handler = Closure::<dyn Fn(web_sys::PointerEvent)>::new(move |event: web_sys::PointerEvent| {
                 // Trusted touch pointers only: the replayed ones, a mouse and a pen go through.
-                if event.is_trusted() && st.enabled.get() && event.pointer_type() == "touch" && !native(event.target()) {
+                if event.is_trusted() && st.enabled.get() && event.pointer_type() == "touch" && !is_native(event.target()) {
                     event.stop_immediate_propagation();
                 }
             });
@@ -102,9 +98,9 @@ impl State {
         if !event.is_trusted() || !self.enabled.get() {
             return;
         }
-        // A touch that starts in a native view stays native for its whole gesture: the phase never leaves Idle.
-        if kind == "touchstart" && native(event.target()) {
-            self.phase.set(Phase::Idle);
+        // A touch that starts on page content of the app's own (a preview) belongs to the browser.
+        // Its moves and end find the shim idle and pass through too.
+        if kind == "touchstart" && is_native(event.target()) {
             return;
         }
         if event.touches().length() > 1 || (kind == "touchstart" && event.touches().length() != 1) {
@@ -234,15 +230,16 @@ impl State {
     }
 }
 
-/// The target is inside an element marked `data-native-touch`.
-fn native(target: Option<web_sys::EventTarget>) -> bool {
-    target.and_then(|t| t.dyn_into::<web_sys::Element>().ok()).is_some_and(|e| e.closest("[data-native-touch]").ok().flatten().is_some())
-}
-
 /// Keep the event from eframe and from the browser's own scrolling.
 fn swallow(event: &web_sys::TouchEvent) {
     event.stop_immediate_propagation();
     if event.cancelable() {
         event.prevent_default();
     }
+}
+
+/// True for an element inside one marked `data-band-native`: the app draws it as HTML and wants
+/// the browser's own scrolling there.
+fn is_native(target: Option<web_sys::EventTarget>) -> bool {
+    target.and_then(|t| t.dyn_into::<web_sys::Element>().ok()).is_some_and(|e| e.closest("[data-band-native]").ok().flatten().is_some())
 }

@@ -308,6 +308,10 @@ try {
         ext: "vectorcraft",
         noLayoutTolerance: 0.15,
         file: { name: "drawing.svg", bytes: svg },
+        // Compact opens on the preview; Edit leads to the editor the touch scenarios test.
+        prepare: async ({ page }) => {
+          await editorFrame(page).evaluate(() => document.querySelector("[data-band-native] button").click());
+        },
         tap: [137, 440],
         clear: [60, 750],
         drag: { from: [300, 700], to: [250, 680] },
@@ -320,6 +324,135 @@ try {
         },
       },
     );
+  }
+
+  // Preview (compact layout): the drawing as HTML built from the engine's SVG.
+  {
+    const PHONE = { width: 390, height: 844 };
+    const tall = Buffer.from(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="800" viewBox="0 0 200 800"><rect x="10" y="10" width="180" height="780" fill="#3a7"/><circle cx="100" cy="700" r="40" fill="#c33"/></svg>',
+    );
+    const reloaded = Buffer.from(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="120" viewBox="0 0 200 120"><rect x="20" y="20" width="160" height="80" fill="#36c"/></svg>',
+    );
+    const ctx = await browser.newContext({ viewport: PHONE, hasTouch: true, deviceScaleFactor: 1 });
+    const page = await ctx.newPage();
+    page.on("pageerror", (e) => console.log("  [pageerror]", String(e).slice(0, 300)));
+    await page.goto(pageUrl);
+    const cdp = await ctx.newCDPSession(page);
+    const touch = (type, points) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: points.map(([x, y], i) => ({ x, y, id: i })) });
+    const openAt = async (name, bytes, layout, size = [PHONE.width, PHONE.height]) => {
+      const id = await page.evaluate(() => window.frame());
+      await page.evaluate(([w, h]) => {
+        document.body.style.margin = "0";
+        document.querySelector("iframe[data-editor]").style.cssText = `width:${w}px;height:${h}px;border:0;display:block`;
+      }, size);
+      await page.evaluate((i) => window.whenHello(i), id);
+      await page.evaluate(([i, n, b, l]) => {
+        const msg = { type: "init", file: { name: n, path: n, mime: "", bytes: b, readOnly: false }, theme: { mode: "dark", tokens: {} } };
+        if (l) msg.layout = l;
+        window.send(i, msg);
+      }, [id, name, Array.from(bytes), layout]);
+      await waitLog(page, id, "ready");
+      await sleep(2500);
+      return id;
+    };
+    const ui = () =>
+      inFrame(page, () => {
+        const root = document.querySelector("[data-band-native]");
+        const img = root.querySelector("img");
+        const scroller = root.children[1];
+        const back = document.querySelector("body > button");
+        return {
+          shown: getComputedStyle(root).display !== "none",
+          backShown: getComputedStyle(back).display !== "none",
+          bg: getComputedStyle(root).backgroundColor,
+          decoded: img.complete && img.naturalWidth > 0,
+          svg: decodeURIComponent(img.getAttribute("src") ?? "").replace(/^data:image\/svg\+xml;charset=utf-8,/, ""),
+          pageWidth: root.querySelector("img").parentElement.getBoundingClientRect().width,
+          scrollTop: scroller.scrollTop,
+          scrollable: scroller.scrollHeight > scroller.clientHeight,
+          topIsPreview: !!document.elementFromPoint(195, 422)?.closest("[data-band-native]"),
+        };
+      });
+    const shot = (name) => page.screenshot({ path: join(out, `preview-${name}.png`) });
+    const click = (sel) => inFrame(page, (s) => document.querySelector(s).click(), sel);
+
+    // S1: compact opens on the preview, which scrolls and zooms by touch.
+    const id = await openAt("tall.svg", tall, "compact");
+    const a = await ui();
+    await shot("opened");
+    check("preview:S1a", a.shown && a.decoded && a.topIsPreview && !a.backShown && a.svg.includes("<rect"), `preview shown over the editor; image decoded; svg ${a.svg.length} chars`);
+    check("preview:S1b", a.scrollable, "a tall drawing is taller than the frame");
+    await touch("touchStart", [[195, 700]]);
+    for (let i = 1; i <= 14; i++) { await sleep(16); await touch("touchMove", [[195, 700 - i * 30]]); }
+    await touch("touchEnd", []);
+    await sleep(500);
+    const b = await ui();
+    await shot("scrolled");
+    check("preview:S1c", b.scrollTop > 100, `one finger scrolled the preview to ${b.scrollTop}px`);
+    await touch("touchStart", [[155, 400], [235, 400]]);
+    for (let i = 1; i <= 10; i++) { await sleep(16); await touch("touchMove", [[155 - i * 8, 400], [235 + i * 8, 400]]); }
+    await touch("touchEnd", []);
+    await sleep(500);
+    const c = await ui();
+    await shot("zoomed");
+    check("preview:S1d", c.pageWidth > b.pageWidth * 1.8, `two fingers zoomed the page from ${b.pageWidth.toFixed(0)}px to ${c.pageWidth.toFixed(0)}px`);
+    const noSel = (await logOf(page, id)).filter((m) => m.type === "selection" && m.selection);
+    check("preview:S1e", noSel.length === 0, "the preview reports no selection");
+    await page.evaluate((i) => window.send(i, { type: "theme", mode: "light", tokens: { background: "#ffeedd" } }), id);
+    await sleep(500);
+    check("preview:S1f", (await ui()).bg === "rgb(255, 238, 221)", "the theme message sets the preview's background");
+
+    // S2: Edit opens the editor, an edit makes it dirty, Back shows the edit, save still works.
+    await click("[data-band-native] button");
+    await sleep(800);
+    const d = await ui();
+    await shot("editing");
+    check("preview:S2a", !d.shown && d.backShown, "Edit hides the preview and shows Back");
+    const nodesBefore = await nodes(page);
+    await draw(page);
+    await waitLog(page, id, "dirty");
+    await click("body > button");
+    await sleep(800);
+    const e = await ui();
+    await shot("back");
+    const rects = (e.svg.match(/<rect/g) ?? []).length;
+    check("preview:S2b", e.shown && rects > (a.svg.match(/<rect/g) ?? []).length && sameJson(await dirties(page, id), [true]), `Back shows the edit (${rects} rects), still dirty`);
+    await page.evaluate((i) => window.send(i, { type: "requestSave" }), id);
+    await waitLog(page, id, "save");
+    const saved = Buffer.from((await logOf(page, id)).find((m) => m.type === "save").bytes);
+    await page.evaluate((i) => window.send(i, { type: "saved" }), id);
+    await waitLog(page, id, "dirty", 2);
+    check("preview:S2c", saved.toString().includes("<rect") && sameJson(await dirties(page, id), [true, false]) && nodesBefore > 0, `save from the preview sends ${saved.length} bytes; dirty ${JSON.stringify(await dirties(page, id))}`);
+
+    // S4: reload shows the new bytes.
+    const before = (await ui()).svg;
+    await page.evaluate(([i, bytes]) => window.send(i, { type: "reload" }, bytes), [id, Array.from(reloaded)]);
+    await sleep(3500);
+    const r = await ui();
+    await shot("reloaded");
+    check("preview:S4", r.shown && r.svg !== before && r.svg.includes("<rect") && !r.svg.includes("<circle"), "reload replaced the preview with the new drawing");
+
+    // S3: the regular layout opens the editor and has no preview.
+    await page.close();
+    const wide = await ctx.newPage();
+    await wide.setViewportSize({ width: 1280, height: 800 });
+    await wide.goto(pageUrl);
+    const page2 = wide;
+    const idW = await page2.evaluate(() => window.frame());
+    await page2.evaluate(() => { document.querySelector("iframe[data-editor]").style.cssText = "width:1280px;height:800px;border:0;display:block"; });
+    await page2.evaluate((i) => window.whenHello(i), idW);
+    await page2.evaluate(([i, b]) => window.init(i, "wide.svg", b), [idW, Array.from(svg)]);
+    await waitLog(page2, idW, "ready");
+    await sleep(2500);
+    const w = await editorFrame(page2).evaluate(() => ({
+      shown: getComputedStyle(document.querySelector("[data-band-native]")).display !== "none",
+      back: getComputedStyle(document.querySelector("body > button")).display !== "none",
+    }));
+    await page2.screenshot({ path: join(out, "preview-regular.png") });
+    check("preview:S3", !w.shown && !w.back, "a regular frame opens the editor, no preview and no Back");
+    await ctx.close();
   }
 } catch (e) {
   console.log("ERROR", e);

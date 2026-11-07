@@ -8,8 +8,8 @@
 //! arrives before the wasm has loaded (it stores the port as `window.bandHelloPort`).
 //!
 //! Band to editor: `init { file: { name, path, mime, bytes, readOnly }, theme, layout? }`,
-//! `requestSave`, `saved`, `saveFailed { error }`, `reload { bytes }`, `theme { tokens }`
-//! (ignored), `layout { layout }` (`"compact"` or `"regular"`) and `mcp { message }`.
+//! `requestSave`, `saved`, `saveFailed { error }`, `reload { bytes }`, `theme { mode, tokens }`
+//! (handed to [`Editor::set_theme`]), `layout { layout }` (`"compact"` or `"regular"`) and `mcp { message }`.
 //!
 //! Editor to Band: `ready` (the file from `init` is open), `dirty { dirty }`,
 //! `save { bytes }` (a transferred `ArrayBuffer`), `selection { selection }` (a [`Selection`], or
@@ -82,6 +82,11 @@ pub trait Editor {
     fn selection(&mut self) -> Option<Selection> {
         None
     }
+
+    /// Band's theme: `mode` is `"light"` or `"dark"` (empty when Band sent none) and `tokens` is the
+    /// JSON object of semantic colors by name, such as `background` and `foreground`. Called for the
+    /// theme in `init` and for each `theme` message. The default ignores it.
+    fn set_theme(&mut self, _mode: &str, _tokens: &serde_json::Value) {}
 }
 
 #[derive(Clone, Default)]
@@ -192,6 +197,7 @@ impl Bridge {
                 Some("saved") => editor.save_answered(true),
                 Some("saveFailed") => editor.save_answered(false),
                 Some("layout") => self.layout(editor, &event),
+                Some("theme") => theme(editor, &event),
                 _ => {}
             }
         }
@@ -282,6 +288,7 @@ impl Bridge {
         };
         // A layout in `init` is applied before the file opens, so the first frame is already compact.
         self.layout(editor, event);
+        theme(editor, &get(event, "theme"));
         editor.open(&name, bytes);
         self.0.awaiting_ready.set(true);
     }
@@ -310,6 +317,14 @@ impl Bridge {
             None => port.post_message(&message).is_ok(),
         }
     }
+}
+
+/// Hand Band's theme to the editor. `source` is a `theme` message, or the `theme` field of `init`, which
+/// has the same `mode` and `tokens`.
+fn theme(editor: &mut dyn Editor, source: &JsValue) {
+    let mode = get(source, "mode").as_string().unwrap_or_default();
+    let tokens = js_sys::JSON::stringify(&get(source, "tokens")).ok().and_then(|s| s.as_string()).and_then(|s| serde_json::from_str(&s).ok());
+    editor.set_theme(&mode, &tokens.unwrap_or(serde_json::Value::Null));
 }
 
 /// The `message` field of an envelope as JSON text.

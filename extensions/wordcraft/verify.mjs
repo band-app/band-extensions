@@ -207,6 +207,13 @@ const docx = (word) =>
     ["_rels/.rels", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>'],
     ["word/document.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>${word}</w:t></w:r></w:p></w:body></w:document>`],
   ]);
+// A .docx whose body is the given WordprocessingML (paragraphs, runs, tables).
+const docxBody = (body) =>
+  zip([
+    ["[Content_Types].xml", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>'],
+    ["_rels/.rels", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>'],
+    ["word/document.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${body}</w:body></w:document>`],
+  ]);
 const odt = (word) =>
   zip([
     ["mimetype", "application/vnd.oasis.opendocument.text"],
@@ -375,6 +382,143 @@ try {
     await page.close();
   }
 
+
+  // The compact reading view (preview.rs): plain HTML in the frame, then Edit, back, reload, theme.
+  {
+    const para = (t, rpr = "") => `<w:p><w:r>${rpr ? `<w:rPr>${rpr}</w:rPr>` : ""}<w:t>${t}</w:t></w:r></w:p>`;
+    const cell = (t) => `<w:tc><w:p><w:r><w:t>${t}</w:t></w:r></w:p></w:tc>`;
+    const table = `<w:tbl><w:tr>${cell("Name")}${cell("Count")}</w:tr><w:tr>${cell("apples")}${cell("12")}</w:tr></w:tbl>`;
+    const filler = Array.from({ length: 80 }, (_, i) => para(`Filler paragraph ${i + 1} that is long enough to wrap onto several lines on a phone-width screen, so the page scrolls.`)).join("");
+    const bytes = docxBody(para("previewword", "<w:b/>") + para("italicword", "<w:i/>") + table + filler);
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, deviceScaleFactor: 1 });
+    const page = await ctx.newPage();
+    page.on("pageerror", (e) => console.log("  [pageerror]", String(e).slice(0, 300)));
+    await page.goto(pageUrl);
+    const cdp = await ctx.newCDPSession(page);
+    const touch = (type, points) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: points.map(([x, y], i) => ({ x, y, id: i })) });
+    const sizeFrame = (w, h) => page.evaluate(([w, h]) => {
+      document.body.style.margin = "0";
+      document.querySelector("iframe[data-editor]").style.cssText = `width:${w}px;height:${h}px;border:0;display:block`;
+    }, [w, h]);
+    const editorFrame = () => page.frames().find((f) => f.url().startsWith(buildBase));
+    const openIn = async (layout, size = [390, 844]) => {
+      const id = await page.evaluate(() => window.frame());
+      await sizeFrame(...size);
+      await page.evaluate((i) => window.whenHello(i), id);
+      await page.evaluate(([i, b, l]) => {
+        const msg = { type: "init", file: { name: "view.docx", path: "view.docx", mime: "", bytes: b, readOnly: false }, theme: { tokens: {} } };
+        if (l) msg.layout = l;
+        window.send(i, msg);
+      }, [id, Array.from(bytes), layout]);
+      await waitLog(page, id, "ready");
+      return id;
+    };
+    const view = () => editorFrame().evaluate(() => document.body.dataset.view ?? null);
+    const docText = () => editorFrame().evaluate(() => document.getElementById("wc_doc").innerText);
+    const waitDoc = async (re, timeout = 30000) => {
+      const end = Date.now() + timeout;
+      let t = "";
+      while (Date.now() < end) {
+        t = await docText().catch(() => "");
+        if (re.test(t)) return t;
+        await sleep(250);
+      }
+      return t;
+    };
+    const visible = (sel) => editorFrame().evaluate((s) => { const e = document.querySelector(s); return !!e && getComputedStyle(e).display !== "none" && e.getBoundingClientRect().width > 0; }, sel);
+    const drag = async (from, to) => {
+      await touch("touchStart", [from]);
+      for (let i = 1; i <= 14; i++) { await sleep(16); await touch("touchMove", [[from[0] + ((to[0] - from[0]) * i) / 14, from[1] + ((to[1] - from[1]) * i) / 14]]); }
+      await touch("touchEnd", []);
+    };
+
+    // P1: a compact frame opens the reading view, not the egui editor.
+    const id = await openIn("compact");
+    const t1 = await waitDoc(/previewword/);
+    await sleep(500);
+    const html1 = await editorFrame().evaluate(() => document.getElementById("wc_doc").innerHTML);
+    await page.screenshot({ path: join(out, "preview-1-compact.png") });
+    const covers = await editorFrame().evaluate(() => { const e = document.elementFromPoint(195, 420); return !!e && !!e.closest("#wc_preview"); });
+    check("preview-P1-shown", (await view()) === "preview" && (await visible("#wc_preview")) && covers && /previewword/.test(t1) && /italicword/.test(t1), `data-view=${await view()}, preview covers the canvas: ${covers}, text: ${t1.slice(0, 50).replace(/\n/g, " ")}`);
+    check("preview-P1-reflow", /<strong>previewword|<strong>[^<]*previewword/.test(html1) && /<em>[^<]*italicword/.test(html1) && /<table/.test(html1), `bold, italic and table survive as HTML: ${html1.length} chars`);
+    // Native scrolling: a one-finger drag moves the text, with no wheel emulation in between.
+    const top0 = await editorFrame().evaluate(() => document.getElementById("wc_scroll").scrollTop);
+    await drag([200, 700], [200, 250]);
+    await sleep(600);
+    const top1 = await editorFrame().evaluate(() => document.getElementById("wc_scroll").scrollTop);
+    await page.screenshot({ path: join(out, "preview-2-scrolled.png") });
+    check("preview-P1-scroll", top1 > top0 + 100, `scrollTop ${top0} -> ${top1}`);
+    // Pinch zoom stays with the browser: the page allows it and nothing swallows the gesture.
+    const zoomInfo = await editorFrame().evaluate(() => ({
+      touchAction: getComputedStyle(document.getElementById("wc_scroll")).touchAction,
+      noZoomMeta: /user-scalable=no|maximum-scale=1\b/.test(document.querySelector("meta[name=viewport]").content),
+    }));
+    const scaleBefore = await page.evaluate(() => window.visualViewport.scale);
+    await cdp.send("Input.synthesizePinchGesture", { x: 195, y: 420, scaleFactor: 2, relativeSpeed: 400 }).catch((e) => console.log("  pinch:", String(e).slice(0, 100)));
+    await sleep(500);
+    const scaleAfter = await page.evaluate(() => window.visualViewport.scale);
+    await page.screenshot({ path: join(out, "preview-3-pinch.png") });
+    check("preview-P1-zoom", /pinch-zoom|manipulation/.test(zoomInfo.touchAction) && !zoomInfo.noZoomMeta && scaleAfter > scaleBefore, `touch-action ${zoomInfo.touchAction}; visualViewport.scale ${scaleBefore} -> ${scaleAfter}`);
+    await page.goto(pageUrl); // a fresh page, so the pinch zoom does not carry over
+
+    // P2: Edit opens the editor, an edit marks the tab dirty, back shows the edit, save still works.
+    const id2 = await openIn("compact");
+    await waitDoc(/previewword/);
+    check("preview-P2-clean", !(await logOf(page, id2)).some((m) => m.type === "dirty" && m.dirty), "no dirty message before an edit");
+    await editorFrame().click("#wc_edit");
+    await sleep(1500);
+    await page.screenshot({ path: join(out, "preview-4-editor.png") });
+    check("preview-P2-edit", (await view()) === "edit" && !(await visible("#wc_preview")) && (await visible("#wc_editbar")), `data-view=${await view()}`);
+    await call(page, id2, "type_text", { text: "TYPEDINEDIT" });
+    await waitLog(page, id2, "dirty");
+    await editorFrame().click("#wc_back");
+    const back = await waitDoc(/TYPEDINEDIT/);
+    await page.screenshot({ path: join(out, "preview-5-back.png") });
+    check("preview-P2-back", (await view()) === "preview" && /TYPEDINEDIT/.test(back) && /previewword/.test(back), back.slice(0, 80).replace(/\n/g, " "));
+    check("preview-P2-dirty", sameJson(await dirtyOf(page, id2), [true]), `dirty after the round trip: ${JSON.stringify(await dirtyOf(page, id2))}`);
+    await page.evaluate((i) => window.send(i, { type: "requestSave" }), id2);
+    await waitLog(page, id2, "save");
+    const saved = Buffer.from((await logOf(page, id2)).find((m) => m.type === "save").bytes);
+    await page.evaluate((i) => window.send(i, { type: "saved" }), id2);
+    await waitLog(page, id2, "dirty", 2);
+    check("preview-P2-save", saved[0] === 0x50 && sameJson(await dirtyOf(page, id2), [true, false]), `${saved.length} bytes saved, dirty ${JSON.stringify(await dirtyOf(page, id2))}`);
+    // An agent's edit while the reading view shows reaches it too.
+    await call(page, id2, "type_text", { text: "AGENTEDIT" });
+    const agent = await waitDoc(/AGENTEDIT/);
+    check("preview-P2-agent-edit", /AGENTEDIT/.test(agent), "a tool call's edit shows in the reading view");
+
+    // P3: a regular frame opens the editor directly and shows no reading view.
+    await page.setViewportSize({ width: 1280, height: 800 });
+    for (const layout of ["regular", undefined]) {
+      const idr = await openIn(layout, [1280, 800]);
+      await sleep(2500);
+      const hidden = !(await visible("#wc_preview")) && !(await visible("#wc_editbar"));
+      const text = await bodyText(page, idr);
+      await page.screenshot({ path: join(out, `preview-6-${layout ?? "no-layout"}.png`) });
+      check(`preview-P3-${layout ?? "no-layout"}`, hidden && /previewword/.test(text), `reading view hidden: ${hidden}; editor text: ${text.slice(0, 40)}`);
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+
+    // P4: reload with new bytes updates the reading view.
+    const id4 = await openIn("compact");
+    await waitDoc(/previewword/);
+    await page.evaluate(([i, b]) => window.send(i, { type: "reload" }, b), [id4, Array.from(docxBody(para("reloadedword")))]);
+    const re = await waitDoc(/reloadedword/);
+    check("preview-P4-reload", /reloadedword/.test(re) && !/previewword/.test(re), re.slice(0, 60).replace(/\n/g, " "));
+
+    // Theme: the chrome follows Band's colors, the document keeps its own.
+    await page.evaluate((i) => window.send(i, { type: "theme", mode: "dark", tokens: { background: "rgb(10, 20, 30)", foreground: "rgb(230, 230, 230)" } }), id4);
+    await sleep(500);
+    const colors = await editorFrame().evaluate(() => ({
+      chrome: getComputedStyle(document.getElementById("wc_preview")).backgroundColor,
+      sheet: getComputedStyle(document.getElementById("wc_doc")).backgroundColor,
+      ink: getComputedStyle(document.getElementById("wc_doc")).color,
+    }));
+    await page.screenshot({ path: join(out, "preview-7-dark.png") });
+    check("preview-theme", colors.chrome === "rgb(10, 20, 30)" && colors.sheet === "rgb(255, 255, 255)" && colors.ink === "rgb(0, 0, 0)", JSON.stringify(colors));
+    await ctx.close();
+  }
+
   // Compact layout, touch and selection (shared scenarios in scripts/verify-compact.mjs).
   {
     const words = Array.from({ length: 90 }, (_, i) => `Paragraph number ${i + 1} of the compact test document.`).join("</w:t></w:r></w:p><w:p><w:r><w:t>");
@@ -384,6 +528,12 @@ try {
         ext: "wordcraft",
         file: { name: "long.docx", bytes: docx(words) },
         tap: [150, 300],
+        // A compact frame opens the reading view; the shared scenarios drive the editor, so they press Edit first.
+        prepare: async ({ page }) => {
+          const f = page.frames().find((fr) => fr.url().startsWith(buildBase));
+          await f.click("#wc_edit");
+          await sleep(1500);
+        },
         noNull: true,
         tap2: [150, 400],
         drag: { from: [200, 700], to: [200, 300] },

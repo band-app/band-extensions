@@ -15,6 +15,7 @@ license = "MIT OR Apache-2.0"
 band-editor = { path = "../../crates/band-editor" }
 wordcraft-doc = { git = "https://github.com/storytold/wordcraft.git", rev = "ae5c65b9dd11", package = "wordcraft-doc" }
 wordcraft-engine = { git = "https://github.com/storytold/wordcraft.git", rev = "ae5c65b9dd11", package = "wordcraft-engine" }
+wordcraft-formats = { git = "https://github.com/storytold/wordcraft.git", rev = "ae5c65b9dd11", package = "wordcraft-formats" }
 wordcraft-mcp = { git = "https://github.com/storytold/wordcraft.git", rev = "ae5c65b9dd11", package = "wordcraft-mcp" }
 wordcraft-ui-egui = { git = "https://github.com/storytold/wordcraft.git", rev = "ae5c65b9dd11", package = "wordcraft-ui-egui" }
 wordcraft-fonts = { git = "https://github.com/storytold/wordcraft.git", rev = "ae5c65b9dd11", package = "wordcraft-fonts" }

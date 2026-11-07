@@ -19,27 +19,9 @@ export interface Screen {
   height: number;
 }
 
-/** One element of the screen's accessibility tree, flattened. Coordinates are points. */
-export interface DescribedElement {
-  type: string;
-  label?: string;
-  value?: string;
-  id?: string;
-  enabled: boolean;
-  frame: { x: number; y: number; width: number; height: number };
-  /** Where to tap it: the frame's center. */
-  center: { x: number; y: number };
-}
-
+/** The part of serve-sim's accessibility tree the screen size comes from. */
 interface AxNode {
-  type?: string;
-  role_description?: string;
-  AXLabel?: string | null;
-  AXValue?: string | null;
-  AXUniqueId?: string | null;
-  enabled?: boolean;
   frame?: { x: number; y: number; width: number; height: number };
-  children?: AxNode[];
 }
 
 /** The serve-sim this extension ships (pinned in package.json), unless the config names another. */
@@ -76,41 +58,6 @@ function childEnv(): NodeJS.ProcessEnv {
     if (shimDir) env.PATH = `${shimDir}${delimiter}${env.PATH ?? ""}`;
   }
   return env;
-}
-
-const round = (n: number) => Math.round(n * 10) / 10;
-
-/** Keeps the elements that say or do something, in reading order. */
-export function compactTree(roots: AxNode[]): DescribedElement[] {
-  const out: DescribedElement[] = [];
-  const visit = (node: AxNode) => {
-    const label = node.AXLabel?.trim() || undefined;
-    const value = node.AXValue?.trim() || undefined;
-    const id = node.AXUniqueId?.trim() || undefined;
-    const frame = node.frame;
-    const type = node.type ?? node.role_description ?? "Unknown";
-    const interactive =
-      /^(Button|TextField|SecureTextField|Switch|Slider|Link|Cell|Tab|SearchField)/.test(type);
-    if (frame && frame.width > 0 && frame.height > 0 && (label || value || interactive)) {
-      out.push({
-        type,
-        ...(label ? { label } : {}),
-        ...(value && value !== label ? { value } : {}),
-        ...(id && id !== label ? { id } : {}),
-        enabled: node.enabled !== false,
-        frame: {
-          x: round(frame.x),
-          y: round(frame.y),
-          width: round(frame.width),
-          height: round(frame.height),
-        },
-        center: { x: round(frame.x + frame.width / 2), y: round(frame.y + frame.height / 2) },
-      });
-    }
-    for (const child of node.children ?? []) visit(child);
-  };
-  for (const root of roots) visit(root);
-  return out;
 }
 
 /**
@@ -196,32 +143,9 @@ export class ServeSimHelpers {
     }
   }
 
-  async describe(udid: string): Promise<{ screen: Screen | null; elements: DescribedElement[] }> {
-    const roots = await this.tree(udid);
-    const frame = roots[0]?.frame;
-    return {
-      screen: frame ? { width: frame.width, height: frame.height } : null,
-      elements: compactTree(roots),
-    };
-  }
-
-  async tap(udid: string, x: number, y: number): Promise<void> {
-    const screen = await this.screen(udid);
-    if (!screen) throw new Error("The screen size is not known yet; try again in a moment");
-    if (x < 0 || y < 0 || x > screen.width || y > screen.height) {
-      throw new Error(`(${x}, ${y}) is outside the ${screen.width}x${screen.height} point screen`);
-    }
-    await serveSim(["tap", "-d", udid, String(x / screen.width), String(y / screen.height)]);
-  }
-
   async type(udid: string, text: string): Promise<void> {
     await this.helper(udid);
     await serveSim(["type", "-d", udid, "--stdin"], { stdin: text });
-  }
-
-  async button(udid: string, name: string): Promise<void> {
-    await this.helper(udid);
-    await serveSim(["button", "-d", udid, name]);
   }
 
   async rotate(udid: string, orientation: string): Promise<void> {

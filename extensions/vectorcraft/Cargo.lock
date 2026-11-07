@@ -4498,6 +4498,7 @@ dependencies = [
  "vectorcraft-doc",
  "vectorcraft-engine",
  "vectorcraft-format",
+ "vectorcraft-svg",
  "vectorcraft-text",
  "vectorcraft-ui-egui",
  "wasm-bindgen",

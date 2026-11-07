@@ -56,4 +56,4 @@ In the compact layout the file opens in a preview, not the egui editor. `app/src
 
 The preview reports no `selection`. The active cell of the editor underneath is not what the person is looking at, and following taps would mean moving the engine's selection. The editor reports its selection again after Edit.
 
-The overlay carries `data-native-touch`, which the compact touch shim in `crates/band-editor` skips, so touches in it are not turned into taps and wheel events.
+The overlay carries `data-band-native`, which the compact touch shim in `crates/band-editor` skips, so touches in it are not turned into taps and wheel events.

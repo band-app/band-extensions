@@ -32,3 +32,31 @@ export function run(
     if (options.stdin !== undefined) child.stdin?.end(options.stdin);
   });
 }
+
+/** Runs a binary and resolves with its raw stdout, for output that is not text (a PNG). */
+export function runBuffer(
+  bin: string,
+  args: string[],
+  options: { timeoutMs?: number; env?: NodeJS.ProcessEnv } = {},
+): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      bin,
+      args,
+      {
+        timeout: options.timeoutMs ?? 30_000,
+        maxBuffer: 64 * 1024 * 1024,
+        env: options.env ?? process.env,
+        encoding: "buffer",
+      },
+      (err, stdout, stderr) => {
+        if (err) {
+          const detail = String(stderr?.toString() || err.message).trim();
+          reject(new Error(`${bin} ${args.slice(0, 3).join(" ")}: ${detail}`));
+        } else {
+          resolve(stdout);
+        }
+      },
+    );
+  });
+}

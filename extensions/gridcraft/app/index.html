@@ -43,7 +43,7 @@
       const build = () => {
         root = document.createElement("div");
         root.id = "gc-preview";
-        root.setAttribute("data-native-touch", "");
+        root.setAttribute("data-band-native", "");
         root.innerHTML =
           '<div class="gc-bar"><select id="gc-sheets" aria-label="Sheet"></select><span class="gc-grow"></span><button id="gc-edit" type="button">Edit</button></div>' +
           '<div id="gc-scroll"><div id="gc-sheet"><p class="gc-note">Loading\u2026</p></div><div id="gc-note" class="gc-note" hidden></div><div id="gc-sentinel"></div></div>' +
@@ -52,7 +52,7 @@
         backBtn = document.createElement("button");
         backBtn.id = "gc-back";
         backBtn.type = "button";
-        backBtn.setAttribute("data-native-touch", "");
+        backBtn.setAttribute("data-band-native", "");
         backBtn.textContent = "Preview";
         backBtn.hidden = true;
         document.body.appendChild(backBtn);

@@ -4,35 +4,11 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
+import vm from "node:vm";
 import { config, setStateDir } from "../src/config.ts";
 import { ensureOpenShim, openShimScript } from "../src/shim.ts";
-import { compactTree } from "../src/servesim.ts";
-import { jpegSize, mjpegFrames, serveSimButton, streamProfile } from "../src/stream.ts";
-
-describe("compactTree", () => {
-  it("keeps elements with a label, a value or a control type, with a tap point in points", () => {
-    const tree = [
-      {
-        type: "Application",
-        frame: { x: 0, y: 0, width: 402, height: 874 },
-        children: [
-          { type: "StaticText", AXLabel: "Hello", frame: { x: 10, y: 20, width: 100, height: 20 } },
-          { type: "Button", AXLabel: "OK", AXUniqueId: "ok", frame: { x: 100, y: 200, width: 60, height: 40 }, enabled: false },
-          { type: "Other", frame: { x: 0, y: 0, width: 5, height: 5 } },
-          { type: "Switch", frame: { x: 0, y: 0, width: 0, height: 10 } },
-        ],
-      },
-    ];
-    const out = compactTree(tree);
-    assert.deepEqual(
-      out.map((e) => [e.type, e.label, e.id, e.enabled, e.center]),
-      [
-        ["StaticText", "Hello", undefined, true, { x: 60, y: 30 }],
-        ["Button", "OK", "ok", false, { x: 130, y: 220 }],
-      ],
-    );
-  });
-});
+import { modelFromType } from "../src/devices.ts";
+import { jpegSize, mjpegFrames, streamProfile } from "../src/stream.ts";
 
 describe("serve-sim stream parsing", () => {
   const jpeg = (n) => Buffer.concat([Buffer.from([0xff, 0xd8]), Buffer.alloc(n, 1), Buffer.from([0xff, 0xd9])]);
@@ -58,10 +34,7 @@ describe("serve-sim stream parsing", () => {
     assert.equal(jpegSize(Buffer.from([0xff, 0xd8, 0xff, 0xd9])), null);
   });
 
-  it("maps button names and profiles", () => {
-    assert.equal(serveSimButton("HOME"), "home");
-    assert.equal(serveSimButton("SIDE_BUTTON"), "side_button");
-    assert.throws(() => serveSimButton("POWER"), /must be one of/);
+  it("maps stream profiles", () => {
     assert.equal(streamProfile({ profile: "hub" }), "hub");
     assert.equal(streamProfile({ profile: "direct" }), "direct");
     // A stream with no profile (or an unknown one) gets the cheaper half-size profile.
@@ -141,5 +114,87 @@ describe("the open shim", () => {
     assert.equal(ensureOpenShim(where), where);
     assert.equal(readFileSync(join(where, "open"), "utf8"), openShimScript());
     assert.ok(statSync(join(where, "open")).mode & 0o100);
+  });
+});
+
+describe("panel shell helpers", () => {
+  const ctx = { globalThis: null };
+  ctx.globalThis = ctx;
+  vm.runInNewContext(readFileSync(new URL("../panel/shell.js", import.meta.url), "utf8"), ctx);
+  // Results come from another realm, so compare them as JSON.
+  const S = ctx.BandSimShell;
+  const j = (v) => JSON.parse(JSON.stringify(v));
+
+  it("fits a framed phone in the room and keeps the screen's aspect", () => {
+    const l = S.layout({ width: 600, height: 700 }, { width: 402, height: 874 }, true);
+    assert.ok(l.shell.height <= 700 && l.shell.width + 2 * l.button <= 600);
+    assert.ok(Math.abs(l.screen.width / l.screen.height - 402 / 874) < 0.01);
+    assert.equal(l.shell.width, l.screen.width + 2 * l.bezel);
+    assert.ok(l.bezel > 0 && l.screenRadius > l.bezel);
+  });
+
+  it("rotates: a landscape screen is wider than tall and fits as well", () => {
+    const l = S.layout({ width: 800, height: 400 }, { width: 874, height: 402 }, true);
+    assert.ok(l.screen.width > l.screen.height);
+    assert.ok(l.shell.height <= 400 && l.shell.width + 2 * l.button <= 800);
+  });
+
+  it("without the frame the screen fills the room and has no bezel", () => {
+    const l = S.layout({ width: 500, height: 500 }, { width: 402, height: 874 }, false);
+    assert.equal(l.bezel, 0);
+    assert.equal(l.button, 0);
+    assert.ok(l.screen.height >= 497 && l.screen.height <= 498);
+  });
+
+  it("gives an iPad-shaped screen small corners and a tall phone big ones", () => {
+    const pad = S.layout({ width: 900, height: 900 }, { width: 820, height: 1180 }, true);
+    const phone = S.layout({ width: 900, height: 900 }, { width: 402, height: 874 }, true);
+    assert.ok(pad.screenRadius / pad.screen.width < phone.screenRadius / phone.screen.width);
+  });
+
+  it("words the boot phases", () => {
+    assert.equal(S.bootText({ phase: "creating" }), "Creating device\u2026");
+    assert.equal(S.bootText({ phase: "cloning" }), "Creating device\u2026");
+    assert.equal(S.bootText({ phase: "booting", model: "iPhone 17 Pro", name: "Band \u2013 x" }), "Booting iPhone 17 Pro\u2026");
+    assert.equal(S.bootText({ phase: "booting", name: "Band \u2013 x" }), "Booting Band \u2013 x\u2026");
+    assert.equal(S.bootText({ type: "booting" }), "Booting\u2026");
+    assert.equal(modelFromType("com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro"), "iPhone 17 Pro");
+    assert.equal(modelFromType(undefined), undefined);
+  });
+
+  it("maps Band's theme tokens, with or without the -- prefix, and leaves the rest alone", () => {
+    const t = S.themeVars({
+      mode: "dark",
+      tokens: { "--background": "#101010", foreground: " #eee ", "--muted-foreground": "#888", border: "#333", accent: "#222" },
+    });
+    assert.equal(t.scheme, "dark");
+    assert.deepEqual(j(t.vars), { "--bg": "#101010", "--fg": "#eee", "--muted": "#888", "--border": "#333", "--accent": "#222" });
+    assert.ok(j(S.themeVarNames).includes("--bg"));
+    const none = S.themeVars(undefined);
+    assert.equal(none.scheme, null);
+    assert.equal(Object.keys(none.vars).length, 0);
+  });
+
+  it("groups the picker by platform and carries the reason a platform is unavailable", () => {
+    const list = [
+      { name: "Pixel 8", platform: "android" },
+      { name: "iPhone B", platform: "ios" },
+      { name: "iPhone A", platform: "ios" },
+    ];
+    const g = S.pickerSections(list, { ios: { ok: true }, android: { ok: true } });
+    assert.deepEqual(j(g.map((x) => x.label)), ["iOS simulators", "Android emulators"]);
+    assert.deepEqual(j(g[0].devices.map((d) => d.name)), ["iPhone A", "iPhone B"]);
+    const none = S.pickerSections([], { ios: { ok: true }, android: { ok: false, reason: "No SDK" } });
+    assert.deepEqual(j(none.map((x) => [x.key, x.reason])), [["android", "No SDK"]]);
+  });
+
+  it("draws an Android phone with a thinner bezel than an iPhone", () => {
+    const avail = { width: 600, height: 700 };
+    const screen = { width: 402, height: 874 };
+    const ios = S.layout(avail, screen, true, "ios");
+    const android = S.layout(avail, screen, true, "android");
+    assert.equal(android.platform, "android");
+    assert.ok(android.bezel / android.screen.width < ios.bezel / ios.screen.width);
+    assert.ok(android.screenRadius < ios.screenRadius);
   });
 });

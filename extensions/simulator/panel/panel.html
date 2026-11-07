@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>iOS Simulator</title>
+    <title>Simulator</title>
     <style>
       :root {
         color-scheme: light dark;
@@ -12,6 +12,8 @@
         --muted: #6b6b6b;
         --border: #d4d4d4;
         --accent: #e8e8e8;
+        --accent-fg: var(--fg);
+        --danger: #c0392b;
       }
       @media (prefers-color-scheme: dark) {
         :root { --bg: #111111; --fg: #f0f0f0; --muted: #9a9a9a; --border: #333333; --accent: #262626; }
@@ -25,33 +27,8 @@
         color: var(--fg);
         font: 12px/1.4 system-ui, -apple-system, sans-serif;
       }
-      header {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        height: 40px;
-        padding: 0 8px;
-        border-bottom: 1px solid var(--border);
-        flex: none;
-      }
-      #device { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      #status { color: var(--muted); white-space: nowrap; }
-      #spacer { flex: 1; }
       svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-      #phone { color: var(--muted); }
-      .icon { width: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
-      #picker-wrap { position: relative; min-width: 0; }
-      #picker { display: flex; align-items: center; gap: 8px; width: 220px; max-width: 100%; height: 28px; }
-      #picker-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
-      #picker-version { color: var(--muted); white-space: nowrap; }
-      #menu { position: absolute; right: 0; top: 32px; z-index: 10; min-width: 260px; max-height: 60vh; overflow: auto; margin: 0; padding: 4px; list-style: none; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3); }
-      #menu[hidden] { display: none; }
-      #menu li { display: flex; gap: 8px; align-items: center; padding: 4px 8px; border-radius: 4px; cursor: pointer; white-space: nowrap; }
-      #menu li:hover, #menu li[aria-selected="true"] { background: var(--accent); }
-      #menu .name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
-      #menu .meta { color: var(--muted); }
-      #menu .empty { color: var(--muted); cursor: default; }
-      button {
+      button, select {
         height: 24px;
         padding: 0 8px;
         border: 1px solid var(--border);
@@ -61,59 +38,164 @@
         font: inherit;
         cursor: pointer;
       }
-      button:hover:not(:disabled) { background: var(--accent); }
+      select { background: var(--bg); max-width: 100%; }
+      button:hover:not(:disabled) { background: var(--accent); color: var(--accent-fg); }
       button:disabled { opacity: 0.4; cursor: default; }
       button[hidden] { display: none; }
-      main {
-        flex: 1;
-        min-height: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 8px;
-      }
-      canvas {
-        max-width: 100%;
-        max-height: 100%;
-        border: 1px solid var(--border);
-        border-radius: 6px;
-        touch-action: none;
-        outline: none;
-        cursor: default;
-      }
-      body[data-phase="live"] canvas { cursor: pointer; }
-      #error { color: #c0392b; max-width: 40ch; }
+      .icon { width: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+
+      /* Offers: a device started that no pane shows. Never blocks the panes. */
+      #offers { flex: none; display: flex; flex-direction: column; border-bottom: 1px solid var(--border); background: var(--accent); }
+      #offers[hidden] { display: none; }
+      .offer { display: flex; align-items: center; gap: 8px; padding: 4px 8px; min-width: 0; }
+      .offer + .offer { border-top: 1px solid var(--border); }
+      .offer-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+      /* The canvas: nested splits around panes. */
+      #canvas { flex: 1; min-height: 0; display: flex; }
+      .split { flex: 1; min-width: 0; min-height: 0; display: flex; }
+      .split[data-dir="row"] { flex-direction: row; }
+      .split[data-dir="column"] { flex-direction: column; }
+      .cell { min-width: 0; min-height: 0; display: flex; }
+      .divider { flex: none; background: var(--border); touch-action: none; }
+      .split[data-dir="row"] > .divider { width: 5px; cursor: col-resize; }
+      .split[data-dir="column"] > .divider { height: 5px; cursor: row-resize; }
+      .divider:hover, .divider:focus-visible { background: var(--muted); outline: none; }
+
+      .pane { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--bg); position: relative; }
+      .pane[data-focused="true"][data-multi="true"] { box-shadow: inset 0 0 0 2px var(--muted); }
+      header { display: flex; align-items: center; gap: 6px; height: 40px; padding: 0 6px; border-bottom: 1px solid var(--border); flex: none; min-width: 0; }
+      .status { color: var(--muted); white-space: nowrap; }
+      .pane[data-narrow="true"] .status, .pane[data-narrow="true"] .frame-toggle { display: none; }
+      .spacer { flex: 1; min-width: 0; }
+      .picker-wrap { position: relative; min-width: 0; flex: 0 1 230px; }
+      .picker { display: flex; align-items: center; gap: 8px; width: 100%; height: 28px; }
+      .picker-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+      .picker-version { color: var(--muted); white-space: nowrap; }
+      .pane[data-narrow="true"] .picker-version { display: none; }
+      .menu { position: absolute; left: 0; top: 32px; z-index: 20; width: 300px; max-width: 90vw; max-height: 70vh; overflow: auto; margin: 0; padding: 4px; list-style: none; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3); }
+      .menu[hidden] { display: none; }
+      .menu li[role="option"], .menu li.action { display: flex; gap: 8px; align-items: center; padding: 4px 8px; border-radius: 4px; cursor: pointer; white-space: nowrap; }
+      .menu li[role="option"]:hover:not([aria-disabled="true"]), .menu li.action:hover, .menu li[aria-selected="true"] { background: var(--accent); }
+      .menu li[aria-disabled="true"] { opacity: 0.5; cursor: default; }
+      .menu .name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+      .menu .meta { color: var(--muted); }
+      .menu .empty, .menu .note { color: var(--muted); cursor: default; padding: 4px 8px; white-space: normal; }
+      .menu .group { padding: 6px 8px 2px; color: var(--muted); font-size: 11px; }
+      .menu hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; }
+      .menu .newform { display: flex; flex-direction: column; gap: 6px; padding: 6px 8px; white-space: normal; }
+      .menu .newform label { display: flex; flex-direction: column; gap: 2px; color: var(--muted); }
+      .menu .newform .row { display: flex; gap: 6px; justify-content: flex-end; }
+      .menu .newform .hint { color: var(--muted); overflow-wrap: anywhere; }
+      .menu code { background: var(--accent); padding: 1px 4px; border-radius: 3px; user-select: all; }
+      .error-wrap { position: relative; flex: none; }
+      .error-wrap[hidden] { display: none; }
+      .error-btn { color: var(--danger); }
+      .error-pop { position: absolute; left: 0; top: 32px; z-index: 20; width: max-content; max-width: min(40ch, 80vw); padding: 8px; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3); overflow-wrap: anywhere; }
+      .error-pop[hidden] { display: none; }
+
+      main { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 8px; background: var(--bg); position: relative; }
+      canvas { touch-action: none; outline: none; cursor: default; }
+      .pane[data-phase="live"] canvas { cursor: pointer; }
+      .stage { position: relative; flex: none; }
+      .shell { position: absolute; inset: 0; background: #1c1c1e; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18), 0 2px 10px rgba(0, 0, 0, 0.35); }
+      .stage[data-framed="false"] .shell { display: none; }
+      .stage[data-platform="android"] .shell { background: #121212; }
+      .side { position: absolute; background: #2c2c2e; border-radius: 2px; }
+      .screen-box { position: absolute; overflow: hidden; background: #000; }
+      .stage[data-framed="false"] .screen-box { border: 1px solid var(--border); }
+      .screen-box canvas { display: block; width: 100%; height: 100%; border: 0; border-radius: 0; }
+      .cam { position: absolute; top: 2.2%; left: 50%; width: 3%; aspect-ratio: 1; transform: translateX(-50%); border-radius: 50%; background: #000; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.15); display: none; pointer-events: none; }
+      .stage[data-platform="android"][data-framed="true"] .cam { display: block; }
+      .boot { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: #000; color: #d0d0d0; text-align: center; padding: 16px; }
+      .pane[data-phase="connecting"] .boot, .pane[data-phase="booting"] .boot { display: flex; }
+      .spinner { width: 28px; height: 28px; border: 3px solid rgba(255, 255, 255, 0.2); border-top-color: #fff; border-radius: 50%; animation: spin 0.8s linear infinite; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }
+      .off { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: #000; color: #8a8a8a; }
+      .pane[data-phase="off"] .off, .pane[data-phase="closed"] .off { display: flex; }
+      .empty-pane { display: none; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--muted); text-align: center; padding: 16px; position: absolute; inset: 0; }
+      .pane[data-phase="empty"] .empty-pane { display: flex; }
+      .pane[data-phase="empty"] .stage { display: none; }
     </style>
   </head>
-  <body data-phase="connecting" data-layout="regular">
-    <header>
-      <svg id="phone" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></svg>
-      <span id="device" data-testid="sim-panel__device">iOS Simulator</span>
-      <span id="status" data-testid="sim-panel__status">Connecting</span>
-      <span id="error" data-testid="sim-panel__error" hidden></span>
-      <span id="spacer"></span>
-      <div id="picker-wrap">
-        <button id="picker" type="button" data-testid="sim-panel__picker" aria-label="Choose device" aria-haspopup="listbox" aria-expanded="false" title="Choose device">
-          <span id="picker-name" data-testid="sim-panel__picker-name">iOS Simulator</span>
-          <span id="picker-version" data-testid="sim-panel__picker-version"></span>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
-        </button>
-        <ul id="menu" role="listbox" aria-label="Devices" data-testid="sim-panel__menu" hidden></ul>
-      </div>
-      <button id="rotate" class="icon" type="button" data-testid="sim-panel__rotate" aria-label="Rotate" title="Rotate" disabled>
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
-      </button>
-      <button id="home" class="icon" type="button" data-testid="sim-panel__home" aria-label="Home" title="Home" disabled>
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg>
-      </button>
-      <button id="power" class="icon" type="button" data-testid="sim-panel__power" aria-label="Turn off" title="Turn off" disabled>
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></svg>
-      </button>
-      <button id="reconnect" type="button" data-testid="sim-panel__reconnect" hidden>Reconnect</button>
-    </header>
-    <main>
-      <canvas id="screen" tabindex="0" width="1" height="1" data-testid="sim-panel__canvas" aria-label="iOS Simulator screen"></canvas>
-    </main>
+  <body data-layout="regular">
+    <div id="offers" data-testid="sim-offers" role="region" aria-label="Devices that started" hidden></div>
+    <div id="canvas" data-testid="sim-canvas"></div>
+
+    <template id="pane-tpl">
+      <section class="pane" data-testid="sim-panel" data-phase="empty">
+        <header>
+          <span class="status" data-testid="sim-panel__status">Connecting</span>
+          <span class="error-wrap" hidden>
+            <button class="icon error-btn" type="button" data-testid="sim-panel__error" aria-label="Show error" aria-expanded="false" title="Error">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><path d="M12 16h.01"/></svg>
+            </button>
+            <div class="error-pop" role="alert" data-testid="sim-panel__error-text" hidden></div>
+          </span>
+          <span class="picker-wrap">
+            <button class="picker" type="button" data-testid="sim-panel__picker" aria-label="Choose device" aria-haspopup="listbox" aria-expanded="false" title="Choose device">
+              <span class="picker-name" data-testid="sim-panel__picker-name">Choose a device</span>
+              <span class="picker-version" data-testid="sim-panel__picker-version"></span>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <ul class="menu" role="listbox" aria-label="Devices" data-testid="sim-panel__menu" hidden></ul>
+          </span>
+          <span class="spacer"></span>
+          <button class="icon frame-toggle" type="button" data-testid="sim-panel__frame" aria-label="Hide frame" aria-pressed="true" title="Hide frame">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3"/><rect x="8" y="6" width="8" height="12" rx="1"/></svg>
+          </button>
+          <button class="icon rotate" type="button" data-testid="sim-panel__rotate" aria-label="Rotate" title="Rotate" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+          </button>
+          <button class="icon back" type="button" data-testid="sim-panel__back" aria-label="Back" title="Back" disabled hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5 8 12l7 7"/></svg>
+          </button>
+          <button class="icon home" type="button" data-testid="sim-panel__home" aria-label="Home" title="Home" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg>
+          </button>
+          <button class="icon power" type="button" data-testid="sim-panel__power" aria-label="Turn off" title="Turn off" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></svg>
+          </button>
+          <button class="icon split-row" type="button" data-testid="sim-panel__split-row" aria-label="Split side by side" title="Split side by side">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg>
+          </button>
+          <button class="icon split-column" type="button" data-testid="sim-panel__split-column" aria-label="Split top and bottom" title="Split top and bottom">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 12h18"/></svg>
+          </button>
+          <button class="icon close" type="button" data-testid="sim-panel__close" aria-label="Close pane" title="Close pane">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12"/><path d="M18 6 6 18"/></svg>
+          </button>
+          <button class="reconnect" type="button" data-testid="sim-panel__reconnect" hidden>Reconnect</button>
+        </header>
+        <main>
+          <div class="stage" data-framed="true" data-platform="ios" data-testid="sim-panel__stage">
+            <div class="shell" data-testid="sim-panel__shell" aria-hidden="true">
+              <span class="side side-1"></span>
+              <span class="side side-2"></span>
+              <span class="side side-3"></span>
+              <span class="side side-4"></span>
+            </div>
+            <div class="screen-box" data-testid="sim-panel__screen">
+              <canvas class="screen" tabindex="0" width="1" height="1" data-testid="sim-panel__canvas" aria-label="Device screen"></canvas>
+              <span class="cam"></span>
+              <div class="boot" role="status" data-testid="sim-panel__boot">
+                <div class="spinner" aria-hidden="true"></div>
+                <div class="boot-text" data-testid="sim-panel__boot-text">Connecting…</div>
+              </div>
+              <div class="off" data-testid="sim-panel__off"></div>
+            </div>
+          </div>
+          <div class="empty-pane" data-testid="sim-panel__empty">
+            <div>No device in this pane</div>
+            <button class="choose" type="button" data-testid="sim-panel__choose">Choose a device</button>
+          </div>
+        </main>
+      </section>
+    </template>
+
+    <script src="shell.js"></script>
+    <script src="canvas.js"></script>
     <script src="panel.js"></script>
   </body>
 </html>

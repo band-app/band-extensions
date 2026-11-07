@@ -28,6 +28,8 @@ mod keys;
 #[cfg(target_arch = "wasm32")]
 mod pencil;
 #[cfg(target_arch = "wasm32")]
+mod preview;
+#[cfg(target_arch = "wasm32")]
 mod saved_files;
 #[cfg(target_arch = "wasm32")]
 mod web;

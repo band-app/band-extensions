@@ -11,12 +11,12 @@ import { join } from "node:path";
 export interface SimulatorConfig {
   /** Replaces "Band" in every device name. Tests set their own, so they never match a person's devices. */
   namePrefix?: string;
-  /** The most devices booted at once. Default 2. */
+  /** The most iOS simulators booted at once. Default 2. */
   maxBooted?: number;
-  /** A simctl device type identifier for the base device. */
-  deviceType?: string;
-  /** A simctl runtime identifier or version for the base device. */
-  runtime?: string;
+  /** The most Android emulators booted at once. Default 2. */
+  maxBootedAndroid?: number;
+  /** The Android SDK folder, when ANDROID_HOME and ANDROID_SDK_ROOT are not set for the service. */
+  androidSdk?: string;
   /** Another `serve-sim.js` than the one shipped in this extension. */
   serveSimEntry?: string;
 }
@@ -46,23 +46,21 @@ const text = (v: unknown): string | undefined =>
   typeof v === "string" && v.trim() !== "" ? v.trim() : undefined;
 
 /** The current settings: `config.json` first, then the environment, read on every call. */
-export function config(): Required<Pick<SimulatorConfig, "namePrefix" | "maxBooted">> &
+export function config(): Required<Pick<SimulatorConfig, "namePrefix" | "maxBooted" | "maxBootedAndroid">> &
   SimulatorConfig {
   const file = fromFile();
   const env = process.env;
-  const maxFile = file.maxBooted;
-  const maxEnv = Number(env.BAND_SIMULATOR_MAX_BOOTED);
-  const max =
-    typeof maxFile === "number" && Number.isInteger(maxFile) && maxFile >= 1
-      ? maxFile
-      : Number.isInteger(maxEnv) && maxEnv >= 1
-        ? maxEnv
+  const limit = (fromFile: unknown, fromEnv: unknown): number =>
+    typeof fromFile === "number" && Number.isInteger(fromFile) && fromFile >= 1
+      ? fromFile
+      : Number.isInteger(Number(fromEnv)) && Number(fromEnv) >= 1
+        ? Number(fromEnv)
         : 2;
   return {
     namePrefix: text(file.namePrefix) ?? text(env.BAND_SIMULATOR_NAME_PREFIX) ?? "Band",
-    maxBooted: max,
-    deviceType: text(file.deviceType) ?? text(env.BAND_SIMULATOR_DEVICE_TYPE),
-    runtime: text(file.runtime) ?? text(env.BAND_SIMULATOR_RUNTIME),
+    maxBooted: limit(file.maxBooted, env.BAND_SIMULATOR_MAX_BOOTED),
+    maxBootedAndroid: limit(file.maxBootedAndroid, env.BAND_SIMULATOR_MAX_BOOTED_ANDROID),
+    androidSdk: text(file.androidSdk) ?? text(env.ANDROID_HOME) ?? text(env.ANDROID_SDK_ROOT),
     serveSimEntry: text(file.serveSimEntry) ?? text(env.BAND_SERVE_SIM_ENTRY),
   };
 }
