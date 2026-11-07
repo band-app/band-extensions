@@ -1,6 +1,6 @@
 # band-extensions
 
-Official extensions for [Band](https://github.com/band-app/band). Five are editors for the ArtCraft apps: each is a web build of one app that Band frames in a sandboxed iframe, so a person edits a file in a Band tab and an agent edits the same open document through the app's MCP tools. One, the simulator, is a worker service with a panel and agent tools.
+Official extensions for [Band](https://github.com/band-app/band). Five are editors for the ArtCraft apps: each is a web build of one app that Band frames in a sandboxed iframe, so a person edits a file in a Band tab and an agent edits the same open document through the app's MCP tools. One, the simulator, is a worker service with a panel and agent tools. Two, typescript-lsp and python-lsp, give the code viewer a language server.
 
 | Extension | Opens | App |
 |---|---|---|
@@ -10,6 +10,8 @@ Official extensions for [Band](https://github.com/band-app/band). Five are edito
 | [figcraft](extensions/figcraft/README.md) | `*.figcraft`, `*.fig` | [FigCraft](https://github.com/storytold/figcraft) |
 | [vectorcraft](extensions/vectorcraft/README.md) | `*.svg`, `*.svgz`, `*.vectorcraft` | [VectorCraft](https://github.com/storytold/vectorcraft) |
 | [simulator](extensions/simulator/README.md) | a Simulator panel and nine `simulator_*` agent tools | iOS Simulator on a Mac worker, through [serve-sim](https://github.com/EvanBacon/serve-sim) |
+| [typescript-lsp](extensions/typescript-lsp/README.md) | a language server for `*.ts *.tsx *.js *.jsx` | [typescript-language-server](https://github.com/typescript-language-server/typescript-language-server) |
+| [python-lsp](extensions/python-lsp/README.md) | a language server for `*.py` | [Pyright](https://github.com/microsoft/pyright) |
 
 ## Install from Band
 
@@ -69,7 +71,7 @@ Band adds two optional messages to the editor protocol. The extension API stays 
 - Band to editor: `init` may carry `layout: "compact" | "regular"`, and Band sends `{ type: "layout", layout }` when it changes. Compact is a phone-width page or the iOS app. The editor hides ribbons, toolbars and side panels, sizes its interface for touch, and restores the normal interface on `regular`. An unknown value changes nothing.
 - Editor to Band: `{ type: "selection", selection }` when the selection has stayed the same for 250 ms. `selection` is `null` when nothing is selected, otherwise `{ address, kind, label, text?, rect? }`. `address` is what the editor's own tools accept, `label` is short text for a person, `text` is the selected content cut to 4 KB with a trailing "…", and `rect` is in the editor's document units.
 
-`crates/band-editor` does the protocol work. An app implements two optional `Editor` methods, `set_layout(Layout)` and `selection() -> Option<Selection>`, and `Bridge::sync` calls `selection()` every frame and sends only a change.
+`crates/band-editor` does the protocol work. An app implements two optional `Editor` methods, `set_layout(Layout)` and `selection() -> Option<Selection>`, and `Bridge::sync` calls `selection()` every frame and sends only a change. A third optional method, `set_theme(mode, tokens)`, receives the theme from `init` and from each `theme` message, for an extension that draws its own chrome (the figcraft preview does).
 
 While the layout is compact, the bridge also puts a touch shim in front of eframe (`crates/band-editor/src/touch.rs`). A tap reaches the app as a tap, so it selects. A one-finger drag becomes wheel events on the canvas, so it scrolls or pans and does not select. Two-finger gestures do nothing in compact mode.
 

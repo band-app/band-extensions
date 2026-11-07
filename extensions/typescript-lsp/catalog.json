@@ -1,0 +1,4 @@
+{
+  "description": "Completions, hover, diagnostics and go to definition for TypeScript and JavaScript files, from typescript-language-server. Runs on workers with node.",
+  "minBand": "0.64.0"
+}

@@ -57,7 +57,9 @@ export function buildEntry({ ext, version, url, archive }) {
   if (metaText === null) throw new Error(`${ext}-v${version}: the archive has no ${ext}/catalog.json`);
   const meta = catalogMetaSchema.parse(JSON.parse(metaText));
   const services = manifest.contributes?.workerServices ?? [];
-  const requires = [...new Set(services.flatMap((s) => s.requires ?? []))];
+  // A language server runs on a worker like a worker service does.
+  const servers = manifest.contributes?.languageServers ?? [];
+  const requires = [...new Set([...services, ...servers].flatMap((s) => s.requires ?? []))];
   const entry = {
     id: manifest.id,
     name: manifest.name,
@@ -66,7 +68,7 @@ export function buildEntry({ ext, version, url, archive }) {
     url,
     sha256: createHash("sha256").update(archive).digest("hex"),
     minBand: meta.minBand,
-    worker: services.length > 0,
+    worker: services.length > 0 || servers.length > 0,
     requires,
   };
   return catalogEntrySchema.parse(entry);

@@ -74,6 +74,20 @@ A frame scrolled out of view or in a background tab stops drawing, and MCP reque
 3. Copy FigCraft's `[patch.crates-io]`, `[profile.*]`, `[workspace.lints]` and the egui, eframe versions from its root `Cargo.toml`. Replace `Cargo.lock` with FigCraft's at the new rev, then `cargo update -p` as needed. If `wasm-bindgen` changes, CI follows the new lock version by itself.
 4. Bump `version` in `band-extension.json` (the first three parts follow FigCraft, the last is this wrapper's revision), then tag.
 
+## Compact preview
+
+In the compact layout the extension opens a preview first, not the egui editor. The preview is plain HTML in the same frame (`app/index.html`, driven by `app/src/preview.rs`), so a phone scrolls, pinch zooms and themes it natively.
+
+- The engine renders it. `Preview::tick` lists the document's pages and top-level frames (and sections) and exports each one as a PNG with `file.export`, the command the `export` tool runs. A page with no frame lists its loose layers as one image.
+- Images load lazily. The page asks for the visible frames and the ones within a screen of them, at the pixel width they show at on this screen (up to 4096 pixels on a side), and the engine answers one export per frame. After a pinch zoom settles the page asks again for a sharper image.
+- The preview shows the document the editor holds, so unsaved edits are in it. It redraws after `reload` and after the document changes, and when you come back from Edit.
+- **Edit** opens the egui editor in its compact layout, and a **Preview** button on top of it goes back. Neither switch touches the document, the dirty state or saving. Saving works only through the editor's paths, as before.
+- The preview follows Band's `theme` message for its chrome (background, foreground, border, accent). The frames keep their own colors.
+- A regular layout, and an `init` with no layout, open the editor directly.
+- The preview reports no selection. The editor's selection is hidden while the preview shows, so `selection` is `null` until you press Edit.
+
+`verify.mjs` checks this in headless Chrome at 390x844 (scenarios `P1` to `P5`), and runs the shared compact scenarios after pressing Edit.
+
 ## Compact layout and selection
 
 `FigcraftEditor::set_layout` closes the left panel and minimizes the interface (`view.minimize`). FigCraft already shows one side panel at a time below its narrow width, so at 390 pixels compact looks like regular, and `verify.mjs` checks the difference in a 900 pixel frame. `selection` reports the first selected node by the id `get_node` takes, with its text for a text node. The protocol is described in the [root README](../../README.md#compact-layout-and-selection), and `verify.mjs` runs the shared scenarios from `scripts/verify-compact.mjs`.

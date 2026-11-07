@@ -2,7 +2,7 @@ import { mkdir, readFile, realpath, rm } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { DeviceSet, maxBooted } from "./devices.ts";
 import { getStateDir, setStateDir } from "./config.ts";
-import { defineWorkerService } from "./sdk/index.mjs";
+import { defineWorkerService, type WorkerServiceDefinition } from "./sdk/index.mjs";
 import { ServeSimHelpers } from "./servesim.ts";
 import {
   jpegSize,
@@ -47,9 +47,60 @@ const devices = new DeviceSet();
 const helpers = new ServeSimHelpers();
 devices.onShutdown = (udid) => helpers.stop(udid);
 
-defineWorkerService({
+/** Devices with a viewer on the screen stream now, by udid. */
+const watched = new Map<string, number>();
+devices.hasLiveStream = (udid) => (watched.get(udid) ?? 0) > 0;
+
+const SWEEP_EVERY_MS = 24 * 3600_000;
+let sweepTimer: NodeJS.Timeout | undefined;
+
+/** Deletes the devices of worktrees whose folder is gone. A failure only means the next sweep tries again. */
+function sweep(): Promise<void> {
+  return devices
+    .exclusive(() => devices.sweepRemoved())
+    .then(
+      (names) => {
+        if (names.length > 0) console.error(`simulator: deleted ${names.length} device(s) of removed worktrees`);
+      },
+      (err: Error) => console.error(`simulator sweep: ${err.message}`),
+    );
+}
+
+/** Notes where the worktree lives, so a later removal finds its device even after a restart. */
+function remember({ worktreeKey, worktreePath }: { worktreeKey: string; worktreePath: string }): void {
+  void devices.rememberFolder(worktreeKey, worktreePath);
+}
+
+/** Every call and stream notes the worktree's folder before it runs. */
+function withFolders(def: WorkerServiceDefinition): WorkerServiceDefinition {
+  const calls = Object.fromEntries(
+    Object.entries(def.calls ?? {}).map(([name, fn]) => [
+      name,
+      (params: unknown, scope: Parameters<typeof fn>[1]) => {
+        remember(scope);
+        return fn(params, scope);
+      },
+    ]),
+  );
+  const streams = Object.fromEntries(
+    Object.entries(def.streams ?? {}).map(([name, fn]) => [
+      name,
+      (params: Parameters<typeof fn>[0], scope: Parameters<typeof fn>[1], stream: Parameters<typeof fn>[2]) => {
+        remember(scope);
+        return fn(params, scope, stream);
+      },
+    ]),
+  );
+  return { ...def, calls, streams };
+}
+
+defineWorkerService(withFolders({
   onInit({ stateDir }) {
     setStateDir(stateDir);
+    // Behind the start, so a slow simctl never delays the first call.
+    void sweep();
+    sweepTimer = setInterval(() => void sweep(), SWEEP_EVERY_MS);
+    sweepTimer.unref();
   },
 
   calls: {
@@ -73,7 +124,7 @@ defineWorkerService({
     /** Every available iOS device, for the panel's picker, with the one this worktree acts on marked. */
     async devices(_params, { worktreeKey }) {
       const current = await devices.exclusive(() => devices.current(worktreeKey));
-      const list = await devices.listAll();
+      const list = (await devices.listAll()).map((d) => ({ ...d, group: devices.group(d, worktreeKey) }));
       return { current: current.udid, devices: list };
     },
 
@@ -215,17 +266,31 @@ defineWorkerService({
       // behind them. The viewer sees a text "booting" message, then info, then frames.
       let live: ScreenStream | null = null;
       let closed = false;
+      let watching: string | null = null;
+      const unwatch = () => {
+        if (watching === null) return;
+        const left = (watched.get(watching) ?? 1) - 1;
+        if (left > 0) watched.set(watching, left);
+        else watched.delete(watching);
+        watching = null;
+      };
       void (async () => {
         try {
           stream.send(JSON.stringify({ type: "booting" }));
-          const device = await devices.exclusive(() => devices.ensureBooted(worktreeKey));
+          const device = await devices.exclusive(() =>
+            devices.ensureBooted(worktreeKey, (p) => {
+              if (!closed) stream.send(JSON.stringify({ type: "booting", ...p }));
+            }),
+          );
+          watching = device.udid;
+          watched.set(watching, (watched.get(watching) ?? 0) + 1);
           const helper = await helpers.helper(device.udid);
           const screen = (await helpers.screen(device.udid)) ?? { width: 0, height: 0 };
           if (closed) return;
           live = openScreenStream(
             helper,
             helpers,
-            { ...screen, udid: device.udid, name: device.name },
+            { ...screen, udid: device.udid, name: device.name, model: device.model },
             // Band sets `profile`: "direct" for the desktop app on this machine (full size and
             // rate), "hub" when the hub carries the frames (half size, 15 fps at most).
             obj(params),
@@ -237,6 +302,7 @@ defineWorkerService({
         } catch (err) {
           console.error(`simulator screen: ${err instanceof Error ? err.message : err}`);
         } finally {
+          unwatch();
           if (!closed) stream.end();
         }
       })();
@@ -244,6 +310,7 @@ defineWorkerService({
         onMessage: (message) => live?.write(message),
         onClose: () => {
           closed = true;
+          unwatch();
           live?.close();
         },
       };
@@ -258,8 +325,19 @@ defineWorkerService({
     );
   },
 
+  /**
+   * A worktree was removed that this run of the service never served. The folder index in the
+   * state dir says which worktree keys lived there, so the device goes even after a restart.
+   */
+  async onReleasePath(worktreePath) {
+    await devices.exclusive(async () => {
+      for (const key of await devices.keysAt(worktreePath)) await devices.deleteWorktree(key);
+    });
+  },
+
   async onStop() {
+    if (sweepTimer) clearInterval(sweepTimer);
     await devices.exclusive(() => devices.shutdownAll());
     await helpers.stopAll();
   },
-});
+}));
