@@ -71,12 +71,12 @@ Band adds two optional messages to the editor protocol. The extension API stays 
 
 `crates/band-editor` does the protocol work. An app implements two optional `Editor` methods, `set_layout(Layout)` and `selection() -> Option<Selection>`, and `Bridge::sync` calls `selection()` every frame and sends only a change.
 
-While the layout is compact, the bridge also puts a touch shim in front of eframe (`crates/band-editor/src/touch.rs`). A tap reaches the app as a tap, so it selects. A one-finger drag becomes wheel events on the canvas, so it scrolls or pans and does not select. Two-finger gestures do nothing in compact mode.
+While the layout is compact, the bridge also puts a touch shim in front of eframe (`crates/band-editor/src/touch.rs`). A tap reaches the app as a tap, so it selects. A one-finger drag becomes wheel events on the canvas, so it scrolls or pans and does not select. Two-finger gestures do nothing in compact mode. A touch that starts on an element marked `data-native-touch`, or inside one, is left alone, so an extension can put its own HTML over the canvas.
 
 | Extension | Compact | Selection address | Kind |
 |---|---|---|---|
 | gridcraft | ribbon collapsed, formula and status bars off, interface 125% | `Sheet1!B2:C4` (a quoted sheet name when it has spaces), with the range as TSV in `text` | `cell`, `range` |
-| deckcraft | ribbon collapsed, task pane and notes closed, slide list at its narrowest | `slide<index>!<shape id>`, the index `go_to_slide` takes (from 0) and the id `inspect_slide` lists | `shape`, `text` |
+| deckcraft | an HTML preview of the slides first (Edit opens the editor): ribbon collapsed, task pane and notes closed, slide list at its narrowest. See [its README](extensions/deckcraft/README.md#compact-preview) | `slide<index>!<shape id>`, the index `go_to_slide` takes (from 0) and the id `inspect_slide` lists | `shape`, `text` |
 | wordcraft | ribbon, quick access toolbar and navigation pane hidden, interface 125% | the `{"anchor": Pos, "focus": Pos}` JSON that `execute select.range` takes | `paragraph` (a caret), `text` |
 | figcraft | left panel closed, interface minimized (it already shows one panel at a time below its narrow width) | the node id that `get_node` takes | `node`, `text` |
 | vectorcraft | VectorCraft's own Touch workspace | the node id, for the control channel (the web build lists no MCP tools) | `element` |
@@ -88,7 +88,7 @@ Gaps that need a change in the upstream app:
 - GridCraft always has an active cell, so it reports `null` only when no workbook is open.
 - VectorCraft has no agent tools on wasm, so its selection address cannot be checked against an MCP tool. `verify.mjs` checks it against `document.inspect` on the control channel.
 
-`scripts/verify-compact.mjs` holds the scenarios every `verify.mjs` runs at 390x844 with CDP touch events: compact against regular screenshots, a one-finger drag, a tap that selects, the address in the app's own tool, clearing the selection, and an `init` without `layout`.
+`scripts/verify-compact.mjs` holds the scenarios every `verify.mjs` runs at 390x844 (an optional `afterOpen` hook lets an extension that opens a preview first press Edit) with CDP touch events: compact against regular screenshots, a one-finger drag, a tap that selects, the address in the app's own tool, clearing the selection, and an `init` without `layout`.
 
 ## CI and releases
 

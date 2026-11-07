@@ -10,6 +10,7 @@
     addEventListener("message", (e) => {
       if (!window.bandHelloPort && e.source === parent && e.data && e.data.type === "band:hello" && e.data.extensionApi === 1 && e.ports[0]) {
         window.bandHelloPort = e.ports[0];
+        if (window.bandPreview) window.bandPreview.attach(e.ports[0]);
       }
     });
   </script>
@@ -19,10 +20,252 @@
     #deckcraft_canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
     #deckcraft_loading { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
       color: #b8b8b8; font: 14px system-ui, sans-serif; pointer-events: none; }
+    /* The compact-layout preview: plain HTML over the canvas. Colors come from Band's theme tokens
+       (--band-*, set by the script below) and fall back to the system scheme. */
+    :root { color-scheme: light dark; }
+    #bp { position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column;
+      --bp-bg: var(--band-background, Canvas); --bp-fg: var(--band-foreground, CanvasText);
+      --bp-muted: var(--band-muted-foreground, color-mix(in srgb, var(--bp-fg) 60%, var(--bp-bg)));
+      --bp-border: var(--band-border, color-mix(in srgb, var(--bp-fg) 20%, var(--bp-bg)));
+      --bp-accent: var(--band-primary, var(--bp-fg)); --bp-accent-fg: var(--band-primary-foreground, var(--bp-bg));
+      background: var(--bp-bg); color: var(--bp-fg); font: 14px system-ui, sans-serif; -webkit-user-select: none; user-select: none; }
+    #bp[hidden], #bp-back[hidden], #bp-notes[hidden] { display: none; }
+    #bp button { font: inherit; color: var(--bp-fg); background: transparent; border: 1px solid var(--bp-border); border-radius: 8px;
+      min-height: 40px; min-width: 40px; padding: 0 14px; touch-action: manipulation; }
+    #bp button.primary, #bp-back { background: var(--bp-accent); color: var(--bp-accent-fg); border-color: var(--bp-accent); }
+    #bp button:disabled { opacity: .4; }
+    #bp-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--bp-border); }
+    #bp-count { flex: 1; color: var(--bp-muted); font-variant-numeric: tabular-nums; }
+    #bp-track { flex: 1; min-height: 0; display: flex; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory;
+      overscroll-behavior: contain; scrollbar-width: none; }
+    #bp-track::-webkit-scrollbar { display: none; }
+    .bp-slide { flex: 0 0 100%; box-sizing: border-box; min-width: 0; display: flex; overflow: auto; scroll-snap-align: center;
+      scroll-snap-stop: always; touch-action: pan-x pan-y; padding: 12px; overscroll-behavior-y: contain; }
+    .bp-zoom { margin: auto; width: 100%; flex: none; position: relative; background: color-mix(in srgb, var(--bp-fg) 8%, var(--bp-bg));
+      box-shadow: 0 0 0 1px var(--bp-border); }
+    .bp-zoom img { display: block; width: 100%; height: 100%; -webkit-user-drag: none; pointer-events: none; }
+    .bp-zoom img:not([src]) { visibility: hidden; }
+    .bp-wait { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--bp-muted); }
+    .bp-zoom.ready .bp-wait { display: none; }
+    #bp-empty { margin: auto; color: var(--bp-muted); }
+    #bp-notes { max-height: 34%; overflow: auto; padding: 10px 14px; border-top: 1px solid var(--bp-border); white-space: pre-wrap;
+      -webkit-user-select: text; user-select: text; line-height: 1.4; }
+    #bp-notes.none { color: var(--bp-muted); }
+    #bp-nav { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-top: 1px solid var(--bp-border); }
+    #bp-back { position: fixed; z-index: 10; right: 12px; bottom: 12px; min-height: 40px; padding: 0 16px; border-radius: 20px; border: 0;
+      font: 14px system-ui, sans-serif; box-shadow: 0 2px 8px rgba(0, 0, 0, .35); }
   </style>
 </head>
 <body>
   <canvas id="deckcraft_canvas"></canvas>
+  <div id="bp" data-native-touch hidden>
+    <div id="bp-bar">
+      <span id="bp-count" aria-live="polite"></span>
+      <button id="bp-notes-btn" type="button" aria-pressed="false">Notes</button>
+      <button id="bp-edit" type="button" class="primary">Edit</button>
+    </div>
+    <div id="bp-track"></div>
+    <div id="bp-notes" hidden></div>
+    <div id="bp-nav">
+      <button id="bp-prev" type="button" aria-label="Previous slide">&#8249;</button>
+      <button id="bp-next" type="button" aria-label="Next slide">&#8250;</button>
+    </div>
+  </div>
+  <button id="bp-back" type="button" data-native-touch hidden>Preview</button>
+  <script>
+    // The preview. The Rust side (src/preview.rs) calls this object; it holds no document, only slide
+    // pictures the engine rendered, so it stays plain DOM: native scrolling, selection and layout.
+    window.bandPreview = (() => {
+      const $ = (id) => document.getElementById(id);
+      const root = $("bp"), track = $("bp-track"), notesEl = $("bp-notes"), countEl = $("bp-count");
+      const prev = $("bp-prev"), next = $("bp-next"), notesBtn = $("bp-notes-btn");
+      let slides = [], notes = [], aspect = 16 / 9, current = 0, action = "", wake = () => {}, notesOpen = false;
+      const MAX_ZOOM = 4, KEEP = 3;
+
+      $("bp-edit").addEventListener("click", () => { action = "edit"; wake(); });
+      $("bp-back").addEventListener("click", () => { action = "back"; wake(); });
+      notesBtn.addEventListener("click", () => { notesOpen = !notesOpen; notesBtn.setAttribute("aria-pressed", String(notesOpen)); refresh(); });
+      const go = (i) => {
+        i = Math.max(0, Math.min(slides.length - 1, i));
+        track.scrollTo({ left: i * track.clientWidth, behavior: "smooth" });
+      };
+      prev.addEventListener("click", () => go(current - 1));
+      next.addEventListener("click", () => go(current + 1));
+
+      function refresh() {
+        const n = slides.length;
+        countEl.textContent = n ? `${current + 1} / ${n}` : "";
+        prev.disabled = current <= 0;
+        next.disabled = current >= n - 1;
+        notesBtn.hidden = n === 0;
+        const text = (notes[current] || "").trim();
+        notesEl.hidden = !notesOpen || n === 0;
+        notesEl.classList.toggle("none", !text);
+        notesEl.textContent = text || "No notes on this slide.";
+      }
+
+      function unload(s) {
+        if (s.url) URL.revokeObjectURL(s.url);
+        s.url = null; s.fresh = false;
+        s.img.removeAttribute("src");
+        s.zoom.classList.remove("ready");
+      }
+
+      function size(s) {
+        // Fit the whole slide in the viewport at zoom 1; zoom scales the box, and the section scrolls.
+        const w = track.clientWidth - 24, h = track.clientHeight - 24;
+        const fit = Math.max(1, Math.min(w, h * aspect));
+        s.fitW = fit;
+        s.zoom.style.width = fit * s.z + "px";
+        s.zoom.style.height = (fit / aspect) * s.z + "px";
+      }
+
+      function zoomAt(s, z, mx, my) {
+        const zr = s.zoom.getBoundingClientRect();
+        const fx = (mx - zr.left) / zr.width, fy = (my - zr.top) / zr.height;
+        s.z = Math.max(1, Math.min(MAX_ZOOM, z));
+        size(s);
+        const nz = s.zoom.getBoundingClientRect();
+        // Keep the point under the fingers where it was.
+        s.el.scrollLeft += nz.left + fx * nz.width - mx;
+        s.el.scrollTop += nz.top + fy * nz.height - my;
+      }
+
+      function pinch(s) {
+        let start = null, lastTap = 0;
+        const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+        s.el.addEventListener("touchstart", (e) => {
+          if (e.touches.length === 2) start = { d: dist(e.touches), z: s.z };
+          else if (e.touches.length === 1) start = null;
+        }, { passive: true });
+        s.el.addEventListener("touchmove", (e) => {
+          if (e.touches.length !== 2 || !start) return;
+          const t = e.touches;
+          zoomAt(s, start.z * (dist(t) / start.d), (t[0].clientX + t[1].clientX) / 2, (t[0].clientY + t[1].clientY) / 2);
+        }, { passive: true });
+        s.el.addEventListener("touchend", (e) => {
+          if (e.touches.length < 2) start = null;
+          if (e.touches.length === 0 && e.changedTouches.length === 1) {
+            const now = Date.now(), t = e.changedTouches[0];
+            if (now - lastTap < 300) { zoomAt(s, s.z > 1.05 ? 1 : 2.5, t.clientX, t.clientY); lastTap = 0; } else lastTap = now;
+          }
+        }, { passive: true });
+      }
+
+      function build(count) {
+        for (const s of slides) { if (s.url) URL.revokeObjectURL(s.url); }
+        track.textContent = "";
+        slides = [];
+        if (!count) {
+          const e = document.createElement("div");
+          e.id = "bp-empty"; e.textContent = "This presentation has no slides.";
+          track.append(e);
+          return;
+        }
+        for (let i = 0; i < count; i++) {
+          const el = document.createElement("section");
+          el.className = "bp-slide";
+          el.setAttribute("aria-label", `Slide ${i + 1} of ${count}`);
+          const zoom = document.createElement("div"); zoom.className = "bp-zoom";
+          const img = document.createElement("img"); img.alt = `Slide ${i + 1}`; img.draggable = false;
+          const wait = document.createElement("div"); wait.className = "bp-wait"; wait.textContent = `Slide ${i + 1}`;
+          zoom.append(img, wait); el.append(zoom); track.append(el);
+          const s = { el, zoom, img, url: null, fresh: false, z: 1, fitW: 0 };
+          pinch(s);
+          slides.push(s);
+        }
+        slides.forEach(size);
+      }
+
+      let ticking = false;
+      track.addEventListener("scroll", () => {
+        if (ticking) return;
+        ticking = true;
+        requestAnimationFrame(() => {
+          ticking = false;
+          const i = Math.round(track.scrollLeft / Math.max(1, track.clientWidth));
+          if (i !== current && i >= 0 && i < slides.length) {
+            slides[current].z !== 1 && (slides[current].z = 1, size(slides[current]));
+            current = i; refresh();
+          }
+          wake();
+        });
+      }, { passive: true });
+      addEventListener("resize", () => { slides.forEach(size); track.scrollLeft = current * track.clientWidth; });
+
+      // While the preview is up, keys move between slides and never reach the editor behind it.
+      const key = (e) => {
+        if (root.hidden) return;
+        e.stopImmediatePropagation();
+        if (e.type !== "keydown") return;
+        const back = e.key === "ArrowLeft" || e.key === "PageUp", fwd = e.key === "ArrowRight" || e.key === "PageDown" || e.key === " ";
+        if (back || fwd) { e.preventDefault(); go(current + (fwd ? 1 : -1)); }
+      };
+      for (const t of ["keydown", "keyup", "keypress"]) addEventListener(t, key, true);
+
+      const safe = /^[#a-z0-9(),.%\s\/+-]+$/i;
+      function applyTheme(theme) {
+        const tokens = theme && theme.tokens;
+        if (!tokens || typeof tokens !== "object") return;
+        for (const [k, v] of Object.entries(tokens)) {
+          if (/^[a-z0-9-]+$/i.test(k) && typeof v === "string" && safe.test(v)) document.documentElement.style.setProperty("--band-" + k, v);
+        }
+        if (theme.mode === "light" || theme.mode === "dark") document.documentElement.style.colorScheme = theme.mode;
+      }
+
+      const api = {
+        attach(port) {
+          // Another listener beside the editor's: the editor ignores `theme`, the preview uses it. The
+          // editor's own handler starts the port, so this one never delivers early or late.
+          port.addEventListener("message", (e) => {
+            const d = e.data;
+            if (d && d.type === "init") applyTheme(d.theme);
+            else if (d && d.type === "theme") applyTheme(d);
+          });
+        },
+        setWake(f) { wake = f; },
+        show(visible) {
+          root.hidden = !visible;
+          if (visible) {
+            document.activeElement && document.activeElement.blur && document.activeElement.blur();
+            slides.forEach(size);
+            track.scrollLeft = current * track.clientWidth;
+          }
+          wake();
+        },
+        showBack(visible) { $("bp-back").hidden = !visible; },
+        // A deck of `count` slides; keeps the position and the pictures (stale until redrawn) when the count stays.
+        setDeck(count, ratio, texts) {
+          aspect = ratio > 0 && isFinite(ratio) ? ratio : 16 / 9;
+          notes = texts || [];
+          if (count !== slides.length || !slides.length) {
+            current = Math.min(current, Math.max(0, count - 1)); build(count);
+            if (!root.hidden) track.scrollLeft = current * track.clientWidth;
+          }
+          else slides.forEach((s) => { s.fresh = false; size(s); });
+          slides.forEach(size);
+          refresh();
+        },
+        // Slides near the current one that have no up-to-date picture, nearest first.
+        needed() {
+          const out = [];
+          for (let d = 0; d <= 1; d++) for (const i of d ? [current + 1, current - 1] : [current]) if (slides[i] && !slides[i].fresh) out.push(i);
+          slides.forEach((s, i) => { if (Math.abs(i - current) > KEEP && s.url) unload(s); });
+          return out;
+        },
+        setImage(i, url) {
+          const s = slides[i];
+          if (!s) { URL.revokeObjectURL(url); return; }
+          if (s.url) URL.revokeObjectURL(s.url);
+          s.url = url; s.fresh = true; s.img.src = url; s.zoom.classList.add("ready");
+        },
+        takeAction() { const a = action; action = ""; return a; },
+      };
+      // A hello that came before this script ran.
+      if (window.bandHelloPort) api.attach(window.bandHelloPort);
+      return api;
+    })();
+  </script>
   <div id="deckcraft_loading">Loading DeckCraft&hellip;</div>
 </body>
 </html>
