@@ -1,0 +1,17 @@
+/* The right panel's tabs: quiet 24 pt controls, the selected one a pill like a selected segment. */
+button[role="tab"][data-testid^="right-sidepanel__tab--"] {
+  height: 24px;
+  padding-inline: 6px;
+  gap: 4px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--ml-label-2);
+}
+button[role="tab"][data-testid^="right-sidepanel__tab--"]:hover { background: var(--ml-fill) !important; color: var(--ml-label); }
+button[role="tab"][data-testid^="right-sidepanel__tab--"][aria-selected="true"] {
+  background: var(--ml-fill-strong) !important;
+  color: var(--ml-label);
+}

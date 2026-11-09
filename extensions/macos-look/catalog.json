@@ -1,0 +1,4 @@
+{
+  "description": "Restyles Band's desktop app to look close to a native macOS 26 app: system font and colors, a source-list sidebar, a flat toolbar, native size controls and SF Symbols. A client mod: it runs in the page.",
+  "minBand": "0.65.0"
+}

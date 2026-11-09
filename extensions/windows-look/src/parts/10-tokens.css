@@ -1,0 +1,75 @@
+/*
+ * Windows 11 (Fluent) tokens. The values are the documented Fluent design tokens (TextFillColor,
+ * ControlFillColor, CardBackgroundFill, SubtleFill, the default accent) and the WinUI 3 metrics.
+ * They are not measured on a Windows machine. Segoe UI is not on a Mac, so the system font stands in.
+ */
+:root {
+  --wl-text: rgb(0 0 0 / 0.894);
+  --wl-text-2: rgb(0 0 0 / 0.606);
+  --wl-text-3: rgb(0 0 0 / 0.447);
+  --wl-stroke: rgb(0 0 0 / 0.0578);
+  --wl-divider: rgb(0 0 0 / 0.0803);
+  --wl-mica: #f3f3f3;
+  --wl-layer: #fbfbfb;
+  --wl-card: rgb(255 255 255 / 0.7);
+  --wl-control: rgb(255 255 255 / 0.7);
+  --wl-control-hover: rgb(249 249 249 / 0.5);
+  --wl-control-pressed: rgb(249 249 249 / 0.3);
+  --wl-subtle-hover: rgb(0 0 0 / 0.0373);
+  --wl-subtle-pressed: rgb(0 0 0 / 0.0241);
+  --wl-accent: #0067c0;
+  --wl-accent-hover: rgb(0 103 192 / 0.9);
+  --wl-on-accent: #ffffff;
+  --wl-flyout: rgb(252 252 252 / 0.9);
+  --wl-shadow-flyout: 0 8px 16px rgb(0 0 0 / 0.14), 0 0 0 1px rgb(0 0 0 / 0.0578);
+  --wl-focus: #000000;
+}
+/* Fluent disabled states: a flat fill and dimmed text, not a faded copy of the enabled control. */
+:root {
+  --wl-disabled-text: rgb(0 0 0 / 0.3614);
+  --wl-disabled-control: rgb(249 249 249 / 0.3);
+  --wl-disabled-accent: rgb(0 0 0 / 0.2169);
+  --wl-disabled-on-accent: #ffffff;
+}
+:root.dark {
+  --wl-text: #ffffff;
+  --wl-text-2: rgb(255 255 255 / 0.786);
+  --wl-text-3: rgb(255 255 255 / 0.543);
+  --wl-stroke: rgb(255 255 255 / 0.0698);
+  --wl-divider: rgb(255 255 255 / 0.0837);
+  --wl-mica: #202020;
+  --wl-layer: #272727;
+  --wl-card: rgb(255 255 255 / 0.0512);
+  --wl-control: rgb(255 255 255 / 0.0605);
+  --wl-control-hover: rgb(255 255 255 / 0.0837);
+  --wl-control-pressed: rgb(255 255 255 / 0.0326);
+  --wl-subtle-hover: rgb(255 255 255 / 0.0605);
+  --wl-subtle-pressed: rgb(255 255 255 / 0.0419);
+  --wl-accent: #60cdff;
+  --wl-accent-hover: rgb(96 205 255 / 0.9);
+  --wl-on-accent: #000000;
+  --wl-flyout: rgb(44 44 44 / 0.96);
+  --wl-shadow-flyout: 0 8px 16px rgb(0 0 0 / 0.37), 0 0 0 1px rgb(255 255 255 / 0.0698);
+  --wl-focus: #ffffff;
+  --wl-disabled-text: rgb(255 255 255 / 0.3628);
+  --wl-disabled-control: rgb(255 255 255 / 0.0419);
+  --wl-disabled-accent: rgb(255 255 255 / 0.1581);
+  --wl-disabled-on-accent: rgb(255 255 255 / 0.5302);
+}
+:root,
+:root.dark {
+  --foreground: var(--wl-text);
+  --muted-foreground: var(--wl-text-2);
+  --border: var(--wl-divider);
+  --input: var(--wl-stroke);
+  --background: var(--wl-layer);
+  --sidebar: var(--wl-mica);
+  --accent: var(--wl-subtle-hover);
+  --accent-foreground: var(--wl-text);
+  --primary: var(--wl-accent);
+  --primary-foreground: var(--wl-on-accent);
+  --ring: var(--wl-accent);
+  --radius: 0.5rem;
+  /* The terminal sits 8 px inside its panel. Stock Band hides that with one shade; keep it hidden. */
+  --terminal-background: var(--wl-layer);
+}

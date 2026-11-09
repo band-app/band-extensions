@@ -1,0 +1,20 @@
+{
+  "id": "macos-look",
+  "name": "macOS look",
+  "version": "0.3.0",
+  "extensionApi": 1,
+  "contributes": {
+    "mod": {
+      "css": "mod.css",
+      "window": {
+        "material": "sidebar",
+        "titleBarStyle": "hiddenInset",
+        "toolbar": "unified",
+        "trafficLightPosition": {
+          "x": 20,
+          "y": 18
+        }
+      }
+    }
+  }
+}

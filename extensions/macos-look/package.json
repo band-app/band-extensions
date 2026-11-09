@@ -1,0 +1,11 @@
+{
+  "name": "band-extension-macos-look",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "description": "A client mod that gives Band's desktop app a macOS 26 look.",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node build.mjs && node --test test/*.test.mjs"
+  }
+}

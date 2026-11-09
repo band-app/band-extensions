@@ -1,0 +1,6 @@
+/* Fluent type ramp: body 14 px, caption 12 px, subtitle 20 px. Band's text-sm is 14 px already. */
+html {
+  font-family: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: auto;
+}
+body { font-size: 14px; line-height: 20px; }

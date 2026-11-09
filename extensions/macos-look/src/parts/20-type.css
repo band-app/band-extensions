@@ -1,0 +1,25 @@
+/*
+ * Type. AppKit: body 13 pt, secondary 11 pt, headline 13 pt bold, title3 15, title2 17, title1 22.
+ * Band sizes everything in rem, so the root scale makes text-sm (0.875rem) 13 px and text-xs
+ * (0.75rem) 11.1 px. Appearance > UI font size still applies on top of it.
+ */
+html {
+  font-size: calc(var(--font-size-ui, 16px) * 0.92857);
+  font-family: -apple-system, "SF Pro Text", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+body {
+  font-family: inherit;
+  font-size: 0.875rem;
+  line-height: 1.25;
+}
+code,
+pre,
+kbd,
+samp,
+.font-mono {
+  font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+}
+h1, h2, h3 { font-weight: 600; letter-spacing: normal; }

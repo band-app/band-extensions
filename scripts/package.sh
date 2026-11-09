@@ -36,7 +36,8 @@ fi
 build="$src/dist/web"
 if [ "$node_ext" = 1 ]; then
   # A worker service builds service.mjs. A language server extension ships npm packages instead.
-  [ -f "$build/service.mjs" ] || [ -d "$build/node_modules" ] || { echo "no $build/service.mjs or node_modules: build first" >&2; exit 1; }
+  # A client mod ships its files as they are: mod.css and optionally mod.mjs.
+  [ -f "$build/service.mjs" ] || [ -d "$build/node_modules" ] || [ -f "$build/mod.css" ] || [ -f "$build/mod.mjs" ] || { echo "no $build/service.mjs, node_modules or mod.css: build first" >&2; exit 1; }
 else
   [ -f "$build/index.html" ] || { echo "no $build/index.html: build first" >&2; exit 1; }
 fi

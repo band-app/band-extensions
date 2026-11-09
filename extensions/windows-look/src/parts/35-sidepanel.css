@@ -1,0 +1,25 @@
+/* The right panel's tabs (Explorer, Changes, plugin tabs) as a Fluent Pivot: text with a 3 px accent underline. */
+button[role="tab"][data-testid^="right-sidepanel__tab--"] {
+  position: relative;
+  height: 32px;
+  padding-inline: 6px;
+  gap: 4px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 400;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--wl-text-2);
+}
+button[role="tab"][data-testid^="right-sidepanel__tab--"]:hover { background: var(--wl-subtle-hover) !important; color: var(--wl-text); }
+button[role="tab"][data-testid^="right-sidepanel__tab--"][aria-selected="true"] { color: var(--wl-text); font-weight: 600; }
+button[role="tab"][data-testid^="right-sidepanel__tab--"][aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 1px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--wl-accent);
+}

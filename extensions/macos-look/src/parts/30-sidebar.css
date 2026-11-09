@@ -1,0 +1,83 @@
+/*
+ * Sidebar. A source list over the window's `sidebar` vibrancy: Band's own translucent sidebar
+ * (Settings > Appearance, default on) lets the vibrancy show through, and on battery Band paints
+ * it solid. Rows are 32 pt with a neutral fill for the selection, like a macOS source list.
+ */
+html:not([data-translucent-sidebar]) [data-testid="app-shell__sidebar"] {
+  border-right: 0.5px solid var(--ml-sep);
+}
+[data-testid="app-shell__sidebar"] {
+  border-right-color: var(--ml-sep);
+}
+
+/* The sidebar's own title row: same height as the toolbar so the traffic lights sit centered. */
+[data-testid="desktop-title-bar__sidebar-surface"] {
+  height: 52px !important;
+  border-bottom: 0 !important;
+}
+
+/* Section header ("Repos 3"): 11 pt semibold, secondary label. */
+[data-testid="repos-panel__header"] {
+  height: 28px;
+  padding-left: 18px;
+}
+[data-testid="repos-panel__header"] > div:first-child {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ml-label-2);
+}
+
+/* Rows: 32 pt source-list rows, 10 px radius, a neutral fill for the selection. */
+[data-testid^="repo-list__worktree-card--"] {
+  border-radius: var(--ml-radius-row);
+  border-color: transparent !important;
+  box-shadow: none !important;
+  background: transparent;
+  color: var(--ml-label);
+  min-height: var(--ml-row-h);
+  transition: background-color 80ms ease-out;
+}
+/* Band outlines the current card; a source list marks it with the selection fill only. */
+[data-testid^="repo-list__worktree-card--"],
+[data-testid^="repo-list__worktree-card--"]:focus,
+[data-testid^="repo-list__worktree-card--"]:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+[data-testid^="repo-list__worktree-card--"]:hover {
+  background: var(--ml-fill);
+}
+[data-testid^="repo-list__worktree-card--"][data-active="true"],
+[data-testid^="repo-list__worktree-card--"][aria-current="true"],
+[data-testid^="repo-list__worktree-card--"][aria-selected="true"] {
+  background: var(--ml-fill-strong) !important;
+  color: var(--ml-label);
+}
+/* Repo and group headers use the same row shape. */
+[data-testid^="repo-list__repo-header"],
+[data-testid^="repo-list__group-header"] {
+  border-radius: var(--ml-radius-row);
+}
+
+/* Footer: a compact row of 24 pt buttons that fits the sidebar's default width with the update
+   badge showing. */
+[data-testid="repo-list__action-bar"] {
+  padding-inline: 6px !important;
+  gap: 2px !important;
+  border-top: 0.5px solid var(--ml-sep) !important;
+}
+[data-testid="repo-list__action-bar"] > div {
+  gap: 0 !important;
+}
+[data-testid="repo-list__action-bar"] button {
+  border-radius: 6px;
+  color: var(--ml-label-2);
+}
+[data-testid="repo-list__update-badge"],
+[data-testid="repo-list__account-usage-button"] {
+  font-size: 11px !important;
+  padding-inline: 4px !important;
+  gap: 3px !important;
+}

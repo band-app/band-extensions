@@ -1,0 +1,20 @@
+/*
+ * SF Symbols. The desktop app serves `band-symbol://<name>?pt=&w=` (AppKit renders the symbol) and
+ * sets --mac-symbols: 1 on the page only when its native addon loaded. In a browser nothing in this
+ * file applies and Band keeps its Lucide icons.
+ *
+ * Only the icons listed in 71-symbol-map.css are swapped. For each, the Lucide paths are hidden and
+ * the symbol is painted through the svg box as a mask, so size and color (currentColor) still come
+ * from Band.
+ */
+@container style(--mac-symbols: 1) {
+  svg:is(.lucide-plus, .lucide-x, .lucide-check, .lucide-chevron-left, .lucide-chevron-right, .lucide-chevron-down, .lucide-chevron-up, .lucide-chevrons-up-down, .lucide-search, .lucide-settings, .lucide-folder, .lucide-folder-open, .lucide-file, .lucide-file-text, .lucide-git-branch, .lucide-git-compare, .lucide-git-pull-request, .lucide-terminal, .lucide-terminal-square, .lucide-message-square, .lucide-panel-left, .lucide-panel-right, .lucide-arrow-left, .lucide-arrow-right, .lucide-arrow-up, .lucide-arrow-down, .lucide-trash-2, .lucide-trash, .lucide-pencil, .lucide-copy, .lucide-clipboard, .lucide-star, .lucide-play, .lucide-square, .lucide-pin, .lucide-pin-off, .lucide-moon, .lucide-globe, .lucide-external-link, .lucide-refresh-cw, .lucide-rotate-ccw, .lucide-list-filter, .lucide-ellipsis, .lucide-ellipsis-vertical, .lucide-more-horizontal, .lucide-circle-alert, .lucide-triangle-alert, .lucide-info, .lucide-eye, .lucide-eye-off, .lucide-lock, .lucide-bell, .lucide-download, .lucide-upload, .lucide-link, .lucide-unlink, .lucide-mail, .lucide-mail-open, .lucide-loader, .lucide-cloud-off, .lucide-chevrons-down-up, .lucide-git-merge, .lucide-bot, .lucide-code, .lucide-image, .lucide-layout-grid, .lucide-list, .lucide-columns-2, .lucide-maximize, .lucide-minimize, .lucide-house, .lucide-home, .lucide-zap, .lucide-history) {
+    background-color: currentColor;
+    -webkit-mask: var(--sf) center / contain no-repeat;
+    mask: var(--sf) center / contain no-repeat;
+    stroke: none;
+  }
+  svg:is(.lucide-plus, .lucide-x, .lucide-check, .lucide-chevron-left, .lucide-chevron-right, .lucide-chevron-down, .lucide-chevron-up, .lucide-chevrons-up-down, .lucide-search, .lucide-settings, .lucide-folder, .lucide-folder-open, .lucide-file, .lucide-file-text, .lucide-git-branch, .lucide-git-compare, .lucide-git-pull-request, .lucide-terminal, .lucide-terminal-square, .lucide-message-square, .lucide-panel-left, .lucide-panel-right, .lucide-arrow-left, .lucide-arrow-right, .lucide-arrow-up, .lucide-arrow-down, .lucide-trash-2, .lucide-trash, .lucide-pencil, .lucide-copy, .lucide-clipboard, .lucide-star, .lucide-play, .lucide-square, .lucide-pin, .lucide-pin-off, .lucide-moon, .lucide-globe, .lucide-external-link, .lucide-refresh-cw, .lucide-rotate-ccw, .lucide-list-filter, .lucide-ellipsis, .lucide-ellipsis-vertical, .lucide-more-horizontal, .lucide-circle-alert, .lucide-triangle-alert, .lucide-info, .lucide-eye, .lucide-eye-off, .lucide-lock, .lucide-bell, .lucide-download, .lucide-upload, .lucide-link, .lucide-unlink, .lucide-mail, .lucide-mail-open, .lucide-loader, .lucide-cloud-off, .lucide-chevrons-down-up, .lucide-git-merge, .lucide-bot, .lucide-code, .lucide-image, .lucide-layout-grid, .lucide-list, .lucide-columns-2, .lucide-maximize, .lucide-minimize, .lucide-house, .lucide-home, .lucide-zap, .lucide-history) > * {
+    display: none;
+  }
+}

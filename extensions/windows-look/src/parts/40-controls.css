@@ -1,0 +1,65 @@
+/* WinUI 3 controls: 32 px buttons and text boxes, 4 px radius, an accent underline on a focused text box. */
+button[data-variant] { font-size: 14px; font-weight: 400; border-radius: 4px; gap: 8px; }
+button[data-variant][data-size="default"] { height: 32px; padding-inline: 11px; }
+button[data-variant][data-size="sm"] { height: 28px; padding-inline: 10px; }
+button[data-variant][data-size="xs"] { height: 24px; padding-inline: 8px; font-size: 12px; }
+button[data-variant][data-size="lg"] { height: 36px; padding-inline: 16px; }
+button[data-variant][data-size="icon"] { width: 32px; height: 32px; padding: 0; }
+button[data-variant][data-size="icon-sm"] { width: 28px; height: 28px; padding: 0; }
+button[data-variant][data-size="icon-xs"] { width: 24px; height: 24px; padding: 0; }
+button[data-variant][data-variant="outline"],
+button[data-variant][data-variant="secondary"] {
+  background: var(--wl-control);
+  border: 1px solid var(--wl-stroke);
+  border-bottom-color: rgb(0 0 0 / 0.16);
+  box-shadow: none;
+  color: var(--wl-text);
+}
+:root.dark button[data-variant][data-variant="outline"],
+:root.dark button[data-variant][data-variant="secondary"] { border-bottom-color: var(--wl-stroke); border-top-color: rgb(255 255 255 / 0.093); }
+button[data-variant][data-variant="outline"]:hover,
+button[data-variant][data-variant="secondary"]:hover { background: var(--wl-control-hover); }
+button[data-variant][data-variant="outline"]:active,
+button[data-variant][data-variant="secondary"]:active { background: var(--wl-control-pressed); color: var(--wl-text-2); }
+button[data-variant][data-variant="default"] { background: var(--wl-accent); color: var(--wl-on-accent); border: 1px solid rgb(255 255 255 / 0.08); }
+button[data-variant][data-variant="default"]:hover { background: var(--wl-accent-hover); }
+button[data-variant][data-variant="ghost"]:hover { background: var(--wl-subtle-hover); }
+button[data-variant]:active { transform: none; }
+[data-slot="input"], [data-slot="select-trigger"], [data-slot="textarea"] {
+  font-size: 14px;
+  border-radius: 4px;
+  background: var(--wl-control) !important;
+  border: 1px solid var(--wl-stroke) !important;
+  border-bottom: 1px solid rgb(0 0 0 / 0.45) !important;
+  box-shadow: none !important;
+}
+:root.dark [data-slot="input"], :root.dark [data-slot="select-trigger"], :root.dark [data-slot="textarea"] { border-bottom-color: rgb(255 255 255 / 0.54) !important; }
+[data-slot="input"], [data-slot="select-trigger"] { height: 32px; padding-inline: 10px; }
+[data-slot="input"]:focus-visible, [data-slot="textarea"]:focus-visible, [data-slot="select-trigger"]:focus-visible {
+  outline: none;
+  border-bottom: 2px solid var(--wl-accent) !important;
+  background: var(--wl-layer) !important;
+}
+button[data-variant]:focus-visible, [role="tab"]:focus-visible {
+  outline: 2px solid var(--wl-focus);
+  outline-offset: 2px;
+  box-shadow: none !important;
+}
+/* ToggleSwitch: 40 x 20 track, a 12 px thumb. Off is an outline, on is the accent. */
+button[role="switch"] { width: 40px; height: 20px; border-radius: 10px; padding: 3px; box-shadow: none !important; }
+button[role="switch"][data-state="unchecked"] { background: transparent; border: 1px solid var(--wl-text-2); }
+button[role="switch"][data-state="checked"] { background: var(--wl-accent); border: 1px solid var(--wl-accent); }
+button[role="switch"] > span { translate: none; width: 12px; height: 12px; box-shadow: none; transition: transform 160ms cubic-bezier(0.1, 0.9, 0.2, 1); }
+button[role="switch"][data-state="unchecked"] > span { background: var(--wl-text-2); transform: translateX(0); }
+button[role="switch"][data-state="checked"] > span { background: var(--wl-on-accent); transform: translateX(20px); }
+[data-slot="segmented-control"] { border-radius: 4px; background: var(--wl-control); border: 1px solid var(--wl-stroke); padding: 2px; }
+[data-slot="segmented-control-item"] { border-radius: 3px; font-size: 14px; }
+[data-slot="segmented-control-item"][data-state="checked"] { background: var(--wl-subtle-pressed); box-shadow: inset 0 -2px 0 var(--wl-accent); }
+
+/* Disabled buttons: flat fill, dimmed text, no opacity fade. */
+button[data-variant]:disabled { opacity: 1; cursor: default; }
+button[data-variant="outline"]:disabled, button[data-variant="secondary"]:disabled {
+  background: var(--wl-disabled-control); color: var(--wl-disabled-text); border-color: var(--wl-stroke);
+}
+button[data-variant="default"]:disabled { background: var(--wl-disabled-accent); color: var(--wl-disabled-on-accent); border-color: transparent; }
+button[data-variant="ghost"]:disabled { color: var(--wl-disabled-text); background: transparent; }
