@@ -1,0 +1,4 @@
+{
+  "description": "Gives Band a Windows 11 (Fluent) look: Segoe-style type at 14 px, rounded controls with an accent underline, a navigation pane with an accent pill, tab view tabs and acrylic flyouts. A client mod: it runs in the page.",
+  "minBand": "0.65.0"
+}

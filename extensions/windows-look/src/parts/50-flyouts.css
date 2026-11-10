@@ -1,0 +1,27 @@
+/* Flyouts, menus and dialogs: 8 px radius, an acrylic-like layer, a soft shadow. Menu items are 32 px with a 4 px radius. */
+[data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="context-menu-content"],
+[data-slot="context-menu-sub-content"], [data-slot="select-content"], [data-slot="popover-content"], [data-slot="hover-card-content"] {
+  border: 0 !important;
+  border-radius: 8px;
+  padding: 4px;
+  backdrop-filter: blur(30px) saturate(1.25);
+  background: var(--wl-flyout) !important;
+  box-shadow: var(--wl-shadow-flyout) !important;
+  font-size: 14px;
+  color: var(--wl-text);
+}
+[data-slot="dropdown-menu-item"], [data-slot="dropdown-menu-checkbox-item"], [data-slot="dropdown-menu-sub-trigger"],
+[data-slot="context-menu-item"], [data-slot="context-menu-sub-trigger"], [data-slot="select-item"] {
+  min-height: 32px; border-radius: 4px; padding-block: 4px; font-size: 14px;
+}
+[data-slot="dropdown-menu-item"]:focus, [data-slot="dropdown-menu-checkbox-item"]:focus, [data-slot="dropdown-menu-sub-trigger"]:focus,
+[data-slot="context-menu-item"]:focus, [data-slot="select-item"]:focus { background: var(--wl-subtle-hover) !important; color: var(--wl-text) !important; }
+[data-slot="tooltip-content"] { border-radius: 4px; font-size: 12px; padding: 5px 8px; background: var(--wl-flyout) !important; color: var(--wl-text) !important; box-shadow: var(--wl-shadow-flyout) !important; }
+[data-slot="dialog-content"], [data-slot="sheet-content"] {
+  border: 0 !important;
+  border-radius: 8px;
+  background: var(--wl-layer) !important;
+  box-shadow: 0 32px 64px rgb(0 0 0 / 0.28), 0 0 0 1px var(--wl-stroke) !important;
+}
+[data-slot="dialog-overlay"], [data-slot="sheet-overlay"] { background: rgb(0 0 0 / 0.3) !important; }
+* { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--wl-text) 45%, transparent) transparent; }

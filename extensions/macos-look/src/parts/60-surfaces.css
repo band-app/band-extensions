@@ -1,0 +1,102 @@
+/*
+ * Surfaces. Menus and popovers are translucent with blur, a 12 px radius, a hairline and a soft
+ * shadow, sheets and dialogs 26 px. Menu items are 24 pt rows whose highlight is the accent color with white text,
+ * like NSMenu.
+ */
+[data-slot="dropdown-menu-content"],
+[data-slot="dropdown-menu-sub-content"],
+[data-slot="context-menu-content"],
+[data-slot="context-menu-sub-content"],
+[data-slot="select-content"],
+[data-slot="popover-content"],
+[data-slot="hover-card-content"] {
+  border: 0 !important;
+  border-radius: var(--ml-radius-menu);
+  padding: 5px;
+  background: var(--ml-menu-bg) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(1.6);
+  backdrop-filter: blur(20px) saturate(1.6);
+  box-shadow: var(--ml-shadow-menu), 0 0 0 0.5px var(--ml-hairline) !important;
+  font-size: 13px;
+  color: var(--ml-label);
+}
+[data-slot="dropdown-menu-item"],
+[data-slot="dropdown-menu-checkbox-item"],
+[data-slot="dropdown-menu-radio-item"],
+[data-slot="dropdown-menu-sub-trigger"],
+[data-slot="context-menu-item"],
+[data-slot="context-menu-checkbox-item"],
+[data-slot="context-menu-sub-trigger"],
+[data-slot="select-item"] {
+  min-height: 24px;
+  border-radius: 6px;
+  padding-block: 2px;
+  font-size: 13px;
+}
+[data-slot="dropdown-menu-item"]:focus,
+[data-slot="dropdown-menu-checkbox-item"]:focus,
+[data-slot="dropdown-menu-sub-trigger"]:focus,
+[data-slot="dropdown-menu-sub-trigger"][data-state="open"],
+[data-slot="context-menu-item"]:focus,
+[data-slot="context-menu-sub-trigger"]:focus,
+[data-slot="select-item"]:focus {
+  background: var(--ml-selected) !important;
+  color: #fff !important;
+}
+[data-slot="dropdown-menu-item"]:focus *,
+[data-slot="context-menu-item"]:focus *,
+[data-slot="select-item"]:focus * { color: #fff !important; }
+[data-slot="tooltip-content"] {
+  border-radius: 6px;
+  font-size: 11px;
+  padding: 3px 7px;
+  background: var(--ml-menu-bg) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(1.6);
+  backdrop-filter: blur(20px) saturate(1.6);
+  color: var(--ml-label) !important;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.25), 0 0 0 0.5px var(--ml-hairline) !important;
+}
+[data-slot="dialog-content"],
+[data-slot="sheet-content"] {
+  border: 0 !important;
+  border-radius: var(--ml-radius-sheet);
+  background: var(--ml-menu-bg) !important;
+  -webkit-backdrop-filter: blur(30px) saturate(1.6);
+  backdrop-filter: blur(30px) saturate(1.6);
+  box-shadow: 0 24px 60px rgb(0 0 0 / 0.4), 0 0 0 0.5px var(--ml-hairline) !important;
+}
+[data-slot="dialog-overlay"],
+[data-slot="sheet-overlay"] { background: rgb(0 0 0 / 0.25) !important; }
+[data-slot="separator"] { background: var(--ml-sep); }
+
+/* Settings is a full-window dialog: it is the window's content, not a sheet, so it gets no radius,
+   no translucency and no blur of the app behind it. Its top row clears the traffic lights. */
+[data-slot="dialog-content"][data-variant="fullscreen"] {
+  border-radius: 0 !important;
+  background: var(--background) !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+[data-testid="settings-page__top-row"][style*="drag"] {
+  height: 52px !important;
+}
+
+/* Inline notices in the sidebar (the hooks banner): a compact card with the text above its
+   buttons, so the text does not wrap one word per line. */
+[data-testid="hooks-banner"] {
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-inline: 10px !important;
+  padding: 10px 12px !important;
+  border-radius: 10px !important;
+  border: 0 !important;
+  background: var(--ml-fill) !important;
+  box-shadow: inset 0 0 0 0.5px var(--ml-hairline);
+  font-size: 11px !important;
+  line-height: 1.35;
+}
+[data-testid="hooks-banner"] > span:first-child {
+  flex: 1 1 100%;
+  color: var(--ml-label-2) !important;
+}

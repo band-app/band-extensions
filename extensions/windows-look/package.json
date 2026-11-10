@@ -1,0 +1,12 @@
+{
+  "name": "band-extension-windows-look",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A client mod that gives Band a Windows 11 (Fluent) look.",
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "for f in build.mjs test/*.mjs; do node --check \"$f\" || exit 1; done",
+    "test": "node build.mjs && node --test test/*.test.mjs"
+  }
+}

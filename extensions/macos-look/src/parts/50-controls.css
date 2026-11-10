@@ -1,0 +1,132 @@
+/*
+ * Controls. AppKit regular control heights (measured with fittingSize on macOS 26.5): push button,
+ * text field, popup, search field and segmented control are 24 pt, large is 28 pt, small 20 pt, mini
+ * 16 pt. Checkbox and radio are 16 pt, the switch 54 x 24. Band's default button is 40 px; here default is
+ * 28 (large), sm 24, xs 20. Text is 13 pt (11 pt in small controls).
+ */
+button[data-variant] {
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: var(--ml-radius-control);
+  gap: 5px;
+}
+button[data-variant][data-size="default"] { height: var(--ml-control-h); padding-inline: 12px; }
+button[data-variant][data-size="sm"] { height: var(--ml-control-h-sm); padding-inline: 10px; }
+button[data-variant][data-size="xs"] { height: var(--ml-control-h-xs); padding-inline: 8px; font-size: 11px; border-radius: 6px; }
+button[data-variant][data-size="lg"] { height: 32px; padding-inline: 16px; }
+button[data-variant][data-size="icon"] { width: var(--ml-control-h); height: var(--ml-control-h); padding: 0; }
+button[data-variant][data-size="icon-sm"] { width: var(--ml-control-h-sm); height: var(--ml-control-h-sm); padding: 0; }
+button[data-variant][data-size="icon-xs"] { width: var(--ml-control-h-xs); height: var(--ml-control-h-xs); padding: 0; border-radius: 6px; }
+/* Push buttons: a flat quiet fill with a hairline, accent for the default action. */
+button[data-variant][data-variant="outline"],
+button[data-variant][data-variant="secondary"] {
+  background: var(--ml-fill);
+  border: 0;
+  box-shadow: 0 0 0 0.5px var(--ml-sep), 0 0.5px 1px rgb(0 0 0 / 0.1);
+  color: var(--ml-label);
+}
+button[data-variant][data-variant="outline"]:hover,
+button[data-variant][data-variant="secondary"]:hover { background: var(--ml-fill-strong); }
+button[data-variant][data-variant="default"] {
+  background: var(--ml-accent);
+  color: #fff;
+  box-shadow: 0 0.5px 1px rgb(0 0 0 / 0.2), inset 0 0.5px 0 rgb(255 255 255 / 0.25);
+}
+button[data-variant][data-variant="default"]:hover { filter: brightness(1.06); }
+button[data-variant][data-variant="default"]:active { filter: brightness(0.92); transform: none; }
+button[data-variant][data-variant="ghost"]:hover { background: var(--ml-fill); }
+button[data-variant]:active { transform: none; }
+
+/* Text fields, text areas, popup buttons. */
+[data-slot="input"],
+[data-slot="select-trigger"] {
+  height: var(--ml-field-h);
+  border-radius: var(--ml-radius-control);
+  font-size: 13px;
+  background: var(--ml-fill) !important;
+  border: 0 !important;
+  box-shadow: inset 0 0 0 0.5px var(--ml-sep), inset 0 0.5px 1px rgb(0 0 0 / 0.12) !important;
+  padding-inline: 8px;
+}
+[data-slot="textarea"] {
+  border-radius: var(--ml-radius-control);
+  font-size: 13px;
+  background: var(--ml-fill) !important;
+  border: 0 !important;
+  box-shadow: inset 0 0 0 0.5px var(--ml-sep) !important;
+}
+[data-slot="input"]:focus-visible,
+[data-slot="textarea"]:focus-visible,
+[data-slot="select-trigger"]:focus-visible,
+button[data-variant]:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--ml-accent) 50%, transparent);
+  outline-offset: 0;
+  box-shadow: none !important;
+}
+[data-slot="input"]::placeholder,
+[data-slot="textarea"]::placeholder { color: var(--ml-label-3); }
+
+/* Switch: NSSwitch measures 54 x 24 on macOS 26. Accent when on, a white thumb with a shadow. */
+button[role="switch"] {
+  width: 54px;
+  height: 24px;
+  border: 0;
+  padding: 2px;
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 0.5px var(--ml-sep) !important;
+}
+button[role="switch"][data-state="unchecked"] { background: var(--ml-fill-strong); }
+button[role="switch"][data-state="checked"] { background: var(--ml-accent); }
+/* Band's own thumb offset (Tailwind's `translate`) must not add to the transform below. */
+button[role="switch"] > span {
+  translate: none;
+  width: 28px;
+  height: 20px;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 0 0 0.5px rgb(0 0 0 / 0.1);
+}
+button[role="switch"][data-state="checked"] > span { transform: translateX(22px); }
+
+/* Segmented control: a quiet track, the selected segment an inner pill. */
+[data-slot="segmented-control"] {
+  border-radius: var(--ml-radius-control);
+  background: var(--ml-fill);
+  padding: 2px;
+  box-shadow: inset 0 0 0 0.5px var(--ml-sep);
+}
+[data-slot="segmented-control-item"] {
+  border-radius: 6px;
+  font-size: 13px;
+  height: 22px;
+}
+[data-slot="segmented-control-item"][data-state="checked"] {
+  background: var(--ml-window);
+  box-shadow: 0 0.5px 2px rgb(0 0 0 / 0.25), 0 0 0 0.5px rgb(0 0 0 / 0.06);
+  color: var(--ml-label);
+}
+
+/* Overlay scrollbars like AppKit's. */
+* { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--ml-label) 28%, transparent) transparent; }
+
+/* Disabled push buttons: a quiet fill and tertiary text, whatever the variant. The accent button loses its blue too. */
+button[data-variant]:disabled {
+  opacity: 1;
+  background: var(--ml-fill) !important;
+  color: var(--ml-label-3) !important;
+  box-shadow: 0 0 0 0.5px var(--ml-sep) !important;
+  filter: none;
+}
+button[data-variant="ghost"]:disabled, button[data-variant="link"]:disabled { background: transparent !important; box-shadow: none !important; }
+
+/* The terminal's scrollbar: an overlay scroller like AppKit's, 7 pt wide, rounded, no track. */
+.xterm .xterm-scrollable-element > .xterm-scrollbar.xterm-vertical {
+  width: 11px !important;
+  background: transparent !important;
+}
+.xterm .xterm-scrollable-element > .xterm-scrollbar > .xterm-slider {
+  left: 2px !important;
+  width: 7px !important;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--ml-label) 28%, transparent) !important;
+}

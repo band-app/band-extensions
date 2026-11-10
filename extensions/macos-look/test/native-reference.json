@@ -1,0 +1,11 @@
+{
+  "source": "AppKit on macOS 26.5, measured with a Swift probe (NSColor resolved per appearance, NSFont, fittingSize); see .am/spike-glass in the band worktree",
+  "font": { "body": 13, "secondary": 11, "headlineWeight": "bold" },
+  "heights": { "pushRegular": 24, "pushLarge": 28, "pushSmall": 20, "pushMini": 16, "textField": 24, "popup": 24, "segmented": 24, "searchField": 24, "sourceListRowMedium": 32, "checkbox": 16 },
+  "switch": { "w": 54, "h": 24 },
+  "colors": {
+    "light": { "label": [0, 0, 0, 0.85], "secondaryLabel": [0, 0, 0, 0.5], "separator": [0, 0, 0, 0.1], "selectedContent": "#0064e1", "accent": "#007aff", "windowBackground": "#ffffff" },
+    "dark": { "label": [255, 255, 255, 0.85], "secondaryLabel": [255, 255, 255, 0.55], "separator": [255, 255, 255, 0.1], "selectedContent": "#0059d1", "accent": "#007aff", "windowBackground": "#1e1e1e" }
+  },
+  "estimatedFromFinderScreenshot": { "toolbarHeight": 52, "controlHeight": 28 }
+}

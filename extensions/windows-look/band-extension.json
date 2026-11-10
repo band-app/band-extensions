@@ -1,0 +1,20 @@
+{
+  "id": "windows-look",
+  "name": "Windows 11 look",
+  "version": "0.1.0",
+  "extensionApi": 1,
+  "contributes": {
+    "mod": {
+      "css": "mod.css",
+      "window": {
+        "material": "none",
+        "titleBarStyle": "hiddenInset",
+        "toolbar": "none",
+        "trafficLightPosition": {
+          "x": 16,
+          "y": 10
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,62 @@
+/*
+ * NavigationView. The pane is the Mica color, items are 36 px tall with a 4 px radius, and the
+ * selected item has a 3 x 16 px accent pill on its left edge. The window has no floating panel.
+ */
+[data-testid="app-shell__sidebar"] {
+  background: var(--wl-mica) !important;
+  border-right: 1px solid var(--wl-divider) !important;
+}
+html[data-translucent-sidebar] [data-testid="app-shell__sidebar"] { background: var(--wl-mica) !important; }
+[data-testid^="repo-list__worktree-card--"] {
+  position: relative;
+  border-radius: 4px;
+  min-height: 36px;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  background: transparent;
+  color: var(--wl-text);
+  outline: none !important;
+}
+[data-testid^="repo-list__worktree-card--"]:hover { background: var(--wl-subtle-hover); }
+[data-testid^="repo-list__worktree-card--"][data-active="true"],
+[data-testid^="repo-list__worktree-card--"][aria-current="true"],
+[data-testid^="repo-list__worktree-card--"][aria-selected="true"] {
+  background: var(--wl-subtle-pressed) !important;
+}
+[data-testid^="repo-list__worktree-card--"][data-active="true"]::before,
+[data-testid^="repo-list__worktree-card--"][aria-current="true"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 3px;
+  height: 16px;
+  margin-top: -8px;
+  border-radius: 2px;
+  background: var(--wl-accent);
+}
+[data-testid="repos-panel__header"] > div:first-child {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--wl-text-2);
+}
+/* Tab view: the selected tab is a raised layer with 8 px top corners. */
+.band-layout-header { background: var(--wl-mica) !important; border-bottom: 1px solid var(--wl-divider) !important; }
+.band-layout--center > .band-layout-group > .band-layout-header .band-layout-tab {
+  /* Flush with the bottom of the strip, so the selected tab joins the content below it. */
+  margin: 5px 1px 0 6px !important;
+  height: 33px;
+  align-self: flex-end;
+  border-radius: 8px 8px 0 0;
+  border: 0;
+  background: transparent;
+  color: var(--wl-text-2);
+}
+.band-layout--center > .band-layout-group > .band-layout-header .band-layout-tab[data-selected="true"] {
+  background: var(--wl-layer);
+  color: var(--wl-text);
+  box-shadow: 0 -1px 0 var(--wl-stroke), 1px 0 0 var(--wl-stroke), -1px 0 0 var(--wl-stroke);
+}
+.band-layout--center > .band-layout-group > .band-layout-header .band-layout-tab[data-selected="false"]:hover { background: var(--wl-subtle-hover); }

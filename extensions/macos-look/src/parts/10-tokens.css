@@ -1,0 +1,105 @@
+/*
+ * Tokens. Values come from AppKit on macOS 26.5 (measured with NSColor and NSFont, light and dark).
+ * The desktop app injects `--mac-*` variables with the live system colors; each use below falls back
+ * to the measured value, so the look also works in a browser.
+ *
+ * The injected values follow the macOS appearance, Band's theme follows its own setting. They are
+ * used only when the two agree, otherwise the static values for Band's theme apply.
+ */
+:root {
+  --ml-label: rgb(0 0 0 / 0.85);
+  --ml-label-2: rgb(0 0 0 / 0.5);
+  --ml-label-3: rgb(0 0 0 / 0.26);
+  --ml-sep: rgb(0 0 0 / 0.1);
+  --ml-window: #ffffff;
+  --ml-selected: #0064e1; /* emphasized selection, key window */
+  --ml-selected-inactive: #dcdcdc;
+  --ml-accent: #007aff;
+  --ml-link: #0068da;
+  --ml-fill: rgb(0 0 0 / 0.06); /* hover and quiet fills */
+  --ml-fill-strong: rgb(0 0 0 / 0.1);
+  /* Menus, popovers and sheets: a solid surface with a hairline and a soft shadow. */
+  --ml-surface: #fbfbfb;
+  --ml-hairline: rgb(0 0 0 / 0.12);
+  --ml-shadow-menu: 0 10px 30px rgb(0 0 0 / 0.18);
+  /* Blur imitation of Liquid Glass. CSS backdrop-filter only: it blurs what is behind the element
+     inside the page, not the desktop, and refracts nothing. */
+  --ml-glass-filter: blur(10px) brightness(1.04) saturate(1.5);
+  --ml-glass-bg: rgb(255 255 255 / 0.5);
+  --ml-glass-rim: rgb(255 255 255 / 0.7);
+  --ml-glass-shadow: 0 4px 14px rgb(0 0 0 / 0.12), 0 0.5px 1px rgb(0 0 0 / 0.1);
+  --ml-menu-bg: rgb(246 246 246 / 0.78);
+  --ml-glass-thumb: #ffffff;
+  --ml-control-h: 28px;
+  --ml-field-h: 24px;
+  --ml-control-h-sm: 24px;
+  --ml-control-h-xs: 20px;
+  --ml-row-h: 32px;
+  --ml-radius-control: 8px;
+  --ml-radius-row: 10px;
+  --ml-radius-menu: 12px;
+  --ml-radius-sheet: 26px;
+}
+:root.dark {
+  --ml-label: rgb(255 255 255 / 0.85);
+  --ml-label-2: rgb(255 255 255 / 0.55);
+  --ml-label-3: rgb(255 255 255 / 0.25);
+  --ml-sep: rgb(255 255 255 / 0.1);
+  --ml-window: #1e1e1e;
+  --ml-selected: #0059d1;
+  --ml-selected-inactive: #464646;
+  --ml-accent: #007aff;
+  --ml-link: #419cff;
+  --ml-fill: rgb(255 255 255 / 0.07);
+  --ml-fill-strong: rgb(255 255 255 / 0.12);
+  --ml-surface: #2b2b2d;
+  --ml-hairline: rgb(255 255 255 / 0.12);
+  --ml-shadow-menu: 0 10px 30px rgb(0 0 0 / 0.5);
+  --ml-glass-filter: blur(8px) brightness(0.9) saturate(1.4);
+  --ml-glass-bg: rgb(88 88 92 / 0.42);
+  --ml-glass-rim: rgb(255 255 255 / 0.2);
+  --ml-glass-shadow: 0 4px 14px rgb(0 0 0 / 0.28), 0 0.5px 1px rgb(0 0 0 / 0.3);
+  --ml-menu-bg: rgb(40 40 42 / 0.78);
+  --ml-glass-thumb: rgb(255 255 255 / 0.22);
+}
+/* The live system colors, when the macOS appearance matches Band's theme. */
+@media (prefers-color-scheme: light) {
+  :root:not(.dark) {
+    --ml-label: var(--mac-label, rgb(0 0 0 / 0.85));
+    --ml-label-2: var(--mac-label-secondary, rgb(0 0 0 / 0.5));
+    --ml-label-3: var(--mac-label-tertiary, rgb(0 0 0 / 0.26));
+    --ml-sep: var(--mac-separator, rgb(0 0 0 / 0.1));
+    --ml-window: var(--mac-window-background, #ffffff);
+    --ml-selected: var(--mac-selected-content, #0064e1);
+    --ml-selected-inactive: var(--mac-selected-content-inactive, #dcdcdc);
+    --ml-accent: var(--mac-accent, #007aff);
+    --ml-link: var(--mac-link, #0068da);
+  }
+}
+@media (prefers-color-scheme: dark) {
+  :root.dark {
+    --ml-label: var(--mac-label, rgb(255 255 255 / 0.85));
+    --ml-label-2: var(--mac-label-secondary, rgb(255 255 255 / 0.55));
+    --ml-label-3: var(--mac-label-tertiary, rgb(255 255 255 / 0.25));
+    --ml-sep: var(--mac-separator, rgb(255 255 255 / 0.1));
+    --ml-window: var(--mac-window-background, #1e1e1e);
+    --ml-selected: var(--mac-selected-content, #0059d1);
+    --ml-selected-inactive: var(--mac-selected-content-inactive, #464646);
+    --ml-accent: var(--mac-accent, #007aff);
+    --ml-link: var(--mac-link, #419cff);
+  }
+}
+
+/* Band's own tokens, remapped. Everything Band draws follows these. */
+:root,
+:root.dark {
+  --foreground: var(--ml-label);
+  --muted-foreground: var(--ml-label-2);
+  --border: var(--ml-sep);
+  --accent: var(--ml-fill);
+  --accent-foreground: var(--ml-label);
+  --primary: var(--ml-accent);
+  --primary-foreground: #ffffff;
+  --ring: color-mix(in srgb, var(--ml-accent) 55%, transparent);
+  --radius: 0.5rem;
+}
