@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "A virtual desktop for each worktree on a Linux worker: a worker service, a noVNC panel and agent tools.",
+  "description": "A desktop for each worktree on a Linux worker, and the Mac session on a macOS worker: a worker service, a noVNC panel and agent tools.",
   "scripts": {
     "build": "node build.mjs",
     "typecheck": "tsc --noEmit -p .",

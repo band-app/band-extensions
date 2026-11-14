@@ -1,4 +1,5 @@
 import { connect, type Socket } from "node:net";
+import { appleLogin, type Credentials } from "./ard.ts";
 import type { Bgrx } from "./png.ts";
 
 /**
@@ -14,7 +15,12 @@ export class RfbClient {
   private waiter: { need: number; resolve: (b: Buffer) => void; reject: (e: Error) => void } | null = null;
   private error: Error | null = null;
 
-  private constructor(private readonly socket: Socket) {
+  private readonly socket: Socket;
+  private readonly creds?: Credentials;
+
+  private constructor(socket: Socket, creds?: Credentials) {
+    this.socket = socket;
+    this.creds = creds;
     socket.on("data", (chunk) => {
       this.pending = this.pending.length ? Buffer.concat([this.pending, chunk]) : chunk;
       this.flush();
@@ -29,10 +35,10 @@ export class RfbClient {
   }
 
   /** Connects to x11vnc on `127.0.0.1:port` and completes the handshake. */
-  static async open(port: number, timeoutMs = 10_000): Promise<RfbClient> {
+  static async open(port: number, timeoutMs = 10_000, creds?: Credentials): Promise<RfbClient> {
     const socket = connect({ host: "127.0.0.1", port });
     socket.setNoDelay(true);
-    const client = new RfbClient(socket);
+    const client = new RfbClient(socket, creds);
     const timer = setTimeout(() => socket.destroy(new Error("the VNC handshake timed out")), timeoutMs);
     try {
       await new Promise<void>((resolve, reject) => {
@@ -72,19 +78,24 @@ export class RfbClient {
   }
 
   private async handshake(): Promise<void> {
-    const version = (await this.read(12)).toString("ascii");
-    if (!/^RFB 00\d\.00\d\n$/.test(version)) throw new Error(`not an RFB server: ${JSON.stringify(version)}`);
-    this.write(Buffer.from("RFB 003.008\n", "ascii"));
-    const count = (await this.read(1))[0] as number;
-    if (count === 0) {
-      const len = (await this.read(4)).readUInt32BE(0);
-      throw new Error(`the VNC server refused: ${(await this.read(len)).toString("utf8")}`);
+    if (this.creds) {
+      // macOS Screen Sharing: Apple's user and password login.
+      await appleLogin({ read: (n) => this.read(n), write: (b) => this.write(b) }, this.creds);
+    } else {
+      const version = (await this.read(12)).toString("ascii");
+      if (!/^RFB 00\d\.00\d\n$/.test(version)) throw new Error(`not an RFB server: ${JSON.stringify(version)}`);
+      this.write(Buffer.from("RFB 003.008\n", "ascii"));
+      const count = (await this.read(1))[0] as number;
+      if (count === 0) {
+        const len = (await this.read(4)).readUInt32BE(0);
+        throw new Error(`the VNC server refused: ${(await this.read(len)).toString("utf8")}`);
+      }
+      const types = [...(await this.read(count))];
+      if (!types.includes(1)) throw new Error(`the VNC server wants a password (security types ${types.join(",")})`);
+      this.write(Buffer.from([1]));
+      const result = (await this.read(4)).readUInt32BE(0);
+      if (result !== 0) throw new Error("the VNC server refused the connection");
     }
-    const types = [...(await this.read(count))];
-    if (!types.includes(1)) throw new Error(`the VNC server wants a password (security types ${types.join(",")})`);
-    this.write(Buffer.from([1]));
-    const result = (await this.read(4)).readUInt32BE(0);
-    if (result !== 0) throw new Error("the VNC server refused the connection");
     this.write(Buffer.from([1])); // ClientInit: shared
     const init = await this.read(24);
     this.width = init.readUInt16BE(0);
@@ -216,8 +227,8 @@ export class RfbClient {
 export const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /** Opens a client, runs `fn` and always closes it. */
-export async function withRfb<T>(port: number, fn: (c: RfbClient) => Promise<T>): Promise<T> {
-  const client = await RfbClient.open(port);
+export async function withRfb<T>(port: number, fn: (c: RfbClient) => Promise<T>, creds?: Credentials): Promise<T> {
+  const client = await RfbClient.open(port, 10_000, creds);
   try {
     return await fn(client);
   } finally {
