@@ -15,6 +15,11 @@ export interface DesktopConfig {
   browser?: string;
   /** Pass --no-sandbox to the browser. Default: true inside a container (`/.dockerenv`), else false. */
   noSandbox?: boolean;
+  /** macOS workers only. */
+  macos?: {
+    /** The file with the Mac user's password. Default `~/.band/screen-password`. */
+    passwordFile?: string;
+  };
 }
 
 const DEFAULTS: DesktopConfig = { resolution: "1280x800x24", idleSeconds: 1800 };
@@ -58,5 +63,10 @@ export function readConfig(): DesktopConfig {
   }
   if (typeof c.browser === "string" && /^[A-Za-z0-9._/+-]+$/.test(c.browser)) out.browser = c.browser;
   if (typeof c.noSandbox === "boolean") out.noSandbox = c.noSandbox;
+  const mac = c.macos;
+  if (typeof mac === "object" && mac !== null) {
+    const file = (mac as Record<string, unknown>).passwordFile;
+    if (typeof file === "string" && file !== "") out.macos = { passwordFile: file };
+  }
   return out;
 }

@@ -11,6 +11,12 @@
         "requires": ["os=linux", "Xvfb", "x11vnc"],
         "capability": "desktop",
         "worktreeEnv": ["DISPLAY"]
+      },
+      {
+        "id": "macos",
+        "entry": "service.mjs",
+        "requires": ["os=darwin"],
+        "capability": "desktop"
       }
     ],
     "panels": [

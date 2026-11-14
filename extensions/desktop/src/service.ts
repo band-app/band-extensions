@@ -7,7 +7,8 @@ import { Displays, slug } from "./displays.ts";
 import { keysymOfChar, parseKeys } from "./keys.ts";
 import { encodePng, halve } from "./png.ts";
 import { click, press, typeKeys, withRfb } from "./rfb.ts";
-import { defineWorkerService } from "./sdk/index.mjs";
+import * as mac from "./macos.ts";
+import { defineWorkerService, type WorkerServiceDefinition } from "./sdk/index.mjs";
 
 /** An image block in a tool result may hold at most 5 MB decoded; stay under it with room to spare. */
 const MAX_IMAGE_BYTES = 4_500_000;
@@ -55,7 +56,7 @@ function findBrowser(): string {
   throw new Error("No browser found on this worker. Install chromium, or set \"browser\" in the Desktop config.json.");
 }
 
-defineWorkerService({
+const linuxService: WorkerServiceDefinition = {
   onInit({ stateDir }) {
     setStateDir(stateDir);
     mkdirSync(stateDir, { recursive: true, mode: 0o700 });
@@ -210,7 +211,92 @@ defineWorkerService({
   async onStop() {
     await displays.stopAll();
   },
-});
+};
+
+/**
+ * On macOS the session of the worker's own user, through the built-in Screen Sharing. There is no
+ * display to start or stop, and every worktree shares the one session.
+ */
+const macService: WorkerServiceDefinition = {
+  onInit({ stateDir }) {
+    setStateDir(stateDir);
+    mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  },
+
+  // The session is the user's own: nothing to add to an agent's or a terminal's environment.
+  worktreeEnv: () => ({}),
+
+  calls: {
+    status: () => mac.status(),
+
+    async screenshot() {
+      let { img, fullWidth } = await mac.withSession(async (c) => {
+        const shot = await c.screenshot();
+        return { img: shot, fullWidth: shot.width };
+      });
+      let png = encodePng(img);
+      let scale = 1;
+      while (png.length > MAX_IMAGE_BYTES && img.width > 64) {
+        img = halve(img);
+        scale *= 2;
+        png = encodePng(img);
+      }
+      const note =
+        scale === 1
+          ? `Screen ${fullWidth}x${img.height} pixels of the Mac session of ${mac.macUser()}.`
+          : `Screen ${fullWidth}x${img.height * scale} pixels of the Mac session of ${mac.macUser()}; this image is ${img.width}x${img.height}, so multiply its coordinates by ${scale} for desktop_click.`;
+      return {
+        content: [
+          { type: "text", text: note },
+          { type: "image", data: png.toString("base64"), mimeType: "image/png" },
+        ],
+      };
+    },
+
+    async click(params) {
+      const x = num(params, "x");
+      const y = num(params, "y");
+      const b = obj(params).button ?? "left";
+      if (b !== "left" && b !== "middle" && b !== "right") throw new Error("button must be left, middle or right");
+      await mac.withSession((c) => click(c, x, y, b, obj(params).double === true));
+      return { ok: true };
+    },
+
+    async type(params) {
+      const text = str(params, "text");
+      if (text.length > 10_000) throw new Error("text is longer than 10000 characters");
+      await mac.withSession((c) => mac.typeApple(c, [...text].map(keysymOfChar)));
+      return { ok: true };
+    },
+
+    async key(params) {
+      const { modifiers, key } = parseKeys(str(params, "keys"));
+      await mac.withSession((c) => press(c, modifiers, key));
+      return { ok: true };
+    },
+
+    async openUrl(params) {
+      const url = str(params, "url");
+      if (!urlAllowed(url)) throw new Error("Only http, https, file, data and about:blank URLs are opened");
+      await mac.ensureUnlocked(mac.readCredentials()).catch((err) => {
+        throw mac.explain(err);
+      });
+      await mac.openUrl(url);
+      return { ok: true };
+    },
+  },
+
+  streams: {
+    // The panel's noVNC and the Mac's Screen Sharing, with the Apple login done here.
+    screen: (params, _scope, stream) =>
+      mac.openStream(params.profile === "direct" ? "direct" : "hub", {
+        send: (data) => stream.send(data),
+        end: () => stream.end(),
+      }),
+  },
+};
+
+defineWorkerService(process.platform === "darwin" ? macService : linuxService);
 
 process.on("exit", () => displays.killAllNow());
 process.on("SIGTERM", () => {
