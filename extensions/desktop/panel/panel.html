@@ -38,6 +38,16 @@
       #notice { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 16px; color: #b0b0b0; pointer-events: none; }
       #notice[hidden] { display: none; }
       #notice.released { pointer-events: none; background: rgba(10, 10, 10, 0.55); }
+      #login { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(10, 10, 10, 0.85); }
+      #login[hidden] { display: none; }
+      #login form { display: flex; flex-direction: column; gap: 8px; width: min(320px, 100%); padding: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--fg); }
+      #login h1 { margin: 0; font-size: 13px; font-weight: 600; }
+      #login p { margin: 0; color: var(--muted); }
+      #login p#login-reason { color: var(--danger); }
+      #login p[hidden] { display: none; }
+      #login input[type="password"] { height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--fg); font: inherit; }
+      #login label.remember { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+      #login label[hidden] { display: none; }
       body[data-layout="compact"] header { height: 44px; }
       body[data-layout="compact"] button { height: 32px; }
       body[data-layout="compact"] .icon { width: 36px; }
@@ -60,6 +70,18 @@
     </header>
     <div id="screen" data-testid="desktop-panel__screen">
       <div id="notice" data-testid="desktop-panel__notice" hidden></div>
+      <div id="login" data-testid="desktop-panel__login" hidden>
+        <form id="login-form" autocomplete="off">
+          <h1 id="login-title" data-testid="desktop-panel__login-title">Sign in to the Mac</h1>
+          <p id="login-reason" data-testid="desktop-panel__login-reason" role="alert" hidden></p>
+          <input id="login-password" type="password" autocomplete="current-password" aria-label="Mac password" data-testid="desktop-panel__login-password" required />
+          <label id="login-remember-label" class="remember" hidden>
+            <input id="login-remember" type="checkbox" checked data-testid="desktop-panel__login-remember" />
+            Remember on this device
+          </label>
+          <button id="login-submit" type="submit" data-testid="desktop-panel__login-submit">Connect</button>
+        </form>
+      </div>
     </div>
     <script>
       // Band posts band:hello as soon as the frame loads, which can be before the module below has

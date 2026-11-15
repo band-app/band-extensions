@@ -31,6 +31,15 @@ let scaleMode = "fit";
 let framebuffer = null;
 let area = null;
 let sizeObserver = null;
+// "keychain" when the host stores secrets in the OS keychain, else "none" (also on an older Band
+// that sends no `secrets`): the password form shows every time and nothing is saved.
+let secretsMode = "none";
+let nextSecret = 0;
+const pendingSecrets = new Map();
+let serviceError = "";
+let formOpen = false;
+let savedTried = false;
+let login = null;
 
 /**
  * The object noVNC drives in place of a WebSocket: it has the properties noVNC checks for and
@@ -152,7 +161,7 @@ function applyControl() {
   if (!rfb) return;
   rfb.viewOnly = !control;
   rfb.focusOnClick = control;
-  if (control && visible) rfb.focus();
+  if (control && visible && !formOpen) rfb.focus();
   else rfb.blur();
   if (document.body.dataset.phase === "live") setPhase("live");
   showNotice(control ? "" : "Released. Take control in Band's toolbar to continue.", !control);
@@ -171,7 +180,7 @@ function teardownRfb() {
   rfb = null;
   channel?.close();
   channel = null;
-  for (const child of [...screen.children]) if (child.id !== "notice") child.remove();
+  for (const child of [...screen.children]) if (child.id !== "notice" && child.id !== "login") child.remove();
   framebuffer = null;
   $("resolution").textContent = "no signal";
 }
@@ -205,10 +214,112 @@ function openStream() {
   showError("");
   setPhase("connecting");
   streamOpen = false;
+  serviceError = "";
+  savedTried = false;
+  login = null;
+  hideLogin();
   // A new id per attempt, so a late message of the old stream is not taken for this one.
   streamId = `${STREAM_NAME}-${nextStream++}`;
   port.postMessage({ type: "stream.open", id: streamId, name: STREAM_NAME, params: {} });
 }
+
+/** Asks the host to keep, return or forget a secret. Resolves null when the host keeps none. */
+function secretCall(type, key, value) {
+  if (secretsMode !== "keychain" || !port) return Promise.resolve(null);
+  const id = `secret-${nextSecret++}`;
+  return new Promise((resolve, reject) => {
+    pendingSecrets.set(id, { resolve, reject });
+    port.postMessage({ type, id, key, ...(type === "secret.set" ? { value } : {}) });
+  });
+}
+
+function onSecretReply(m) {
+  const waiting = pendingSecrets.get(m.id);
+  if (!waiting) return;
+  pendingSecrets.delete(m.id);
+  if (m.type === "secret.error") waiting.reject(new Error(typeof m.message === "string" ? m.message : "secret failed"));
+  else waiting.resolve(typeof m.value === "string" ? m.value : null);
+}
+
+function sendToService(message) {
+  if (port && streamId && streamOpen) port.postMessage({ type: "stream.send", id: streamId, message: JSON.stringify(message) });
+}
+
+function hideLogin() {
+  formOpen = false;
+  $("login").hidden = true;
+  $("login-password").value = "";
+}
+
+function showLogin(user, reason) {
+  formOpen = true;
+  $("login-title").textContent = `Sign in to the Mac as ${user}`;
+  $("login-reason").textContent = reason;
+  $("login-reason").hidden = !reason;
+  $("login-remember-label").hidden = secretsMode !== "keychain";
+  $("login").hidden = false;
+  if (rfb) rfb.blur();
+  setPhase("connecting", "Sign-in needed");
+  $("login-password").focus();
+}
+
+/** The service wants the Mac password: a saved one first, else the form. A refused one is forgotten. */
+async function onNeedPassword(m) {
+  const id = streamId;
+  const user = typeof m.user === "string" ? m.user : "";
+  const reason = typeof m.reason === "string" ? m.reason : "";
+  const key = `mac:${typeof m.worker === "string" && m.worker ? m.worker : "worker"}:${user}`.slice(0, 200);
+  login = { key, user, save: null };
+  if (!reason && !savedTried && secretsMode === "keychain") {
+    savedTried = true;
+    try {
+      const saved = await secretCall("secret.get", key);
+      if (id !== streamId) return;
+      if (saved) {
+        setPhase("connecting", "Signing in");
+        sendToService({ type: "password", password: saved });
+        return;
+      }
+    } catch {
+      // The keychain could not be read (Touch ID cancelled): ask for the password instead.
+      if (id !== streamId) return;
+    }
+  }
+  if (reason && secretsMode === "keychain") secretCall("secret.delete", key).catch(() => undefined);
+  showLogin(user, reason);
+}
+
+function onServiceMessage(text) {
+  let m;
+  try {
+    m = JSON.parse(text);
+  } catch {
+    return;
+  }
+  if (!m || typeof m !== "object") return;
+  if (m.type === "need-password") void onNeedPassword(m);
+  else if (m.type === "signed-in") {
+    hideLogin();
+    setPhase("connecting");
+    const save = login?.save;
+    if (save) secretCall("secret.set", save.key, save.password).catch(() => undefined);
+    if (login) login.save = null;
+  } else if (m.type === "error" && typeof m.message === "string") {
+    serviceError = m.message;
+    hideLogin();
+    showError(m.message);
+  }
+}
+
+$("login-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const password = $("login-password").value;
+  if (password === "" || !login) return;
+  login.save = secretsMode === "keychain" && $("login-remember").checked ? { key: login.key, password } : null;
+  hideLogin();
+  setPhase("connecting", "Signing in");
+  sendToService({ type: "password", password });
+});
 
 function closeStream() {
   clearTimeout(reconnectTimer);
@@ -221,10 +332,13 @@ function closeStream() {
 function onClosed(code, reason) {
   streamOpen = false;
   teardownRfb();
+  hideLogin();
   setPhase("closed");
-  if (reason) showError(reason);
+  // The service's own reason beats the hub's generic one, and retrying cannot fix it.
+  const why = serviceError || reason;
+  if (why) showError(why);
   const delay = RECONNECT_DELAYS_MS[retries];
-  if (!FINAL_CLOSE_CODES.has(code) && delay !== undefined) {
+  if (!serviceError && !FINAL_CLOSE_CODES.has(code) && delay !== undefined) {
     retries += 1;
     reconnectTimer = setTimeout(openStream, delay);
   } else {
@@ -238,6 +352,7 @@ function onMessage(m) {
       visible = m.visible !== false;
       document.body.dataset.layout = m.layout === "compact" ? "compact" : "regular";
       applyTheme(m.theme);
+      secretsMode = m.secrets === "keychain" ? "keychain" : "none";
       port.postMessage({ type: "ready" });
       openStream();
       break;
@@ -249,6 +364,14 @@ function onMessage(m) {
     case "stream.frame":
       if (m.id !== streamId) break;
       channel?.deliver(m.data);
+      break;
+    case "stream.message":
+      if (m.id !== streamId) break;
+      if (typeof m.text === "string") onServiceMessage(m.text);
+      break;
+    case "secret.result":
+    case "secret.error":
+      onSecretReply(m);
       break;
     case "stream.closed":
       if (m.id !== streamId) break;

@@ -27,13 +27,21 @@ On a Mac the Desktop tab and the six tools show and drive the GUI session of the
 Setup on the Mac:
 
 - Turn on Screen Sharing in System Settings > General > Sharing and allow the worker's user.
-- Put that user's password in `~/.band/screen-password` (one line), for example with a worker profile file secret `{ "item": "<vault item>", "file": "~/.band/screen-password" }`. To use another file, set `macos.passwordFile` in `config.json`. The service reads the file on every call and never logs it.
+- Open the Desktop tab and sign in with that user's password. The password never touches the worker's disk (see below).
 
-If the file is missing or the Mac refuses the login, `desktop_status` and the panel show a message that names the file and the Screen Sharing requirement.
+Sign-in:
+
+- When the Desktop tab opens and the service holds no password, the panel shows a form for the worker user. A wrong password shows "the Mac refused the login" and asks again.
+- The service keeps the password in memory only. It is gone when the service stops, and the service ignores `~/.band/screen-password` and the old `macos.passwordFile` setting. It never logs the password or puts it in a stream's params.
+- In Band.app the panel can keep the password on the viewer's device. With "Remember on this device" checked, Band.app stores it in the OS keychain (Electron safeStorage), under a key the Desktop extension names `mac:<worker id>:<user>`. Later connects read it back, unlocked with Touch ID or the account password, and skip the form. If the Mac refuses the saved password, the panel deletes it and shows the form with the reason. In a browser, or on a Band older than the one that sends `init.secrets`, nothing is saved and the form shows every time.
+- Agent tools (`desktop_status`, `desktop_screenshot`, `desktop_click`, `desktop_type`, `desktop_key`, `desktop_open_url`) log in with the password in memory. Until a viewer has signed in since the service started, they fail with "sign-in needed: open the Desktop tab on this worktree and sign in as <user>". After a viewer signs in, they work. If the Mac later refuses the remembered password, the service forgets it and the tools say "sign-in needed" again.
+- Every failure to open the session (Screen Sharing off, a locked session that stays locked, the Mac closing the connection during the login) reaches the panel as the reason. The panel shows it with a Reconnect button and does not retry.
+
+Stream messages between the panel and the service, as text next to the RFB bytes: the service sends `{"type":"need-password","user","worker","reason"}`, the panel answers `{"type":"password","password"}`, the service sends `{"type":"signed-in"}` before the RFB bytes, or `{"type":"error","message"}` before it ends the stream.
 
 How it works:
 
-- The Mac's server offers Apple's user and password login (RFB security type 30). `RfbClient` speaks it for the tools. For the panel, the service logs in itself, then shows noVNC a server with no authentication (`RFB 003.008`, security type None) and forwards ClientInit and ServerInit. After that, bytes pass through both ways.
+- The Mac's server offers Apple's user and password login (RFB security type 30). `RfbClient` speaks it for the tools. For the panel, the service logs in itself with the password the panel gave, then shows noVNC a server with no authentication (`RFB 003.008`, security type None) and forwards ClientInit and ServerInit. After that, bytes pass through both ways.
 - With the `hub` stream profile the service forwards at most about 15 FramebufferUpdateRequests a second, and sends the latest one when the interval ends. Key, pointer and other messages pass at once and in order. The `direct` profile forwards everything. Frames are not resized, so a big Retina session uses more bandwidth through the hub than a Linux display does.
 - If `ioreg` says the user's session is locked when a stream opens or a tool runs, the service taps Shift, waits 1.5 seconds, types the password and presses Return. It types the password only when the session is locked, and it does not retry for a minute after a failure. If the lock screen shows a list of users, or stays locked for another reason, `desktop_status` and the panel say so, and someone has to choose the user at the Mac once.
 - `desktop_key` sends `cmd` (also `super`, `meta`, `win`) as Super_L, which Apple's server reads as Command, and `alt` as Option. `desktop_open_url` runs `/usr/bin/open <url>` with the same URL allowlist.
@@ -49,10 +57,10 @@ On Linux, a display stops when its worktree is removed, when the service stops (
 Band starts a worker service with an allowlisted environment. The service reads `<worker state dir>/extension-state/desktop/main/config.json` on every call:
 
 ```json
-{ "resolution": "1920x1080x24", "idleSeconds": 1800, "browser": "chromium", "noSandbox": true, "macos": { "passwordFile": "~/.band/screen-password" } }
+{ "resolution": "1920x1080x24", "idleSeconds": 1800, "browser": "chromium", "noSandbox": true }
 ```
 
-Every key is optional. `macos.passwordFile` applies on macOS only. `resolution` applies to displays started afterwards. `noSandbox` defaults to true inside a container (`/.dockerenv`).
+Every key is optional. `resolution` applies to displays started afterwards. `noSandbox` defaults to true inside a container (`/.dockerenv`).
 
 ## Tools
 
@@ -60,4 +68,4 @@ Every key is optional. `macos.passwordFile` applies on macOS only. `resolution` 
 
 ## Tests
 
-`npm test` runs the pure tests, including a fake Mac that implements security type 30 (`test/fake-apple.mjs`) for the login, the stream proxy and the request cap. `integration/run.sh` runs a hub test (S1 to S6) and a Playwright spec against a Band checkout, with the worker in the `band-worker-desktop` image through docker (or natively on Linux). See the header of `run.sh`.
+`npm test` runs the pure tests, including a fake Mac that implements security type 30 (`test/fake-apple.mjs`) for the login, the sign-in flow, the stream proxy and the request cap. `test/panel.test.mjs` drives the built panel in Chromium against a stub of Band's host side (stream and `secret.*` messages); it skips itself when `playwright-core` or a Chromium (`~/Library/Caches/ms-playwright`, or `DESKTOP_TEST_CHROMIUM`) is missing. `integration/run.sh` runs a hub test (S1 to S6) and a Playwright spec against a Band checkout, with the worker in the `band-worker-desktop` image through docker (or natively on Linux). See the header of `run.sh`.

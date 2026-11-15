@@ -1,5 +1,5 @@
 import type { Socket } from "node:net";
-import { appleLogin, ByteReader, type Credentials } from "./ard.ts";
+import { ByteReader } from "./ard.ts";
 
 /** How a panel stream looks to the proxy. */
 export interface PanelSide {
@@ -7,6 +7,8 @@ export interface PanelSide {
   send(data: Uint8Array): void;
   /** Ends the stream. */
   end(): void;
+  /** Tells the viewer why the stream cannot go on, as a text message. */
+  fail(message: string): void;
 }
 
 export interface ProxyOptions {
@@ -100,15 +102,14 @@ export class ClientMessages {
 }
 
 /**
- * Bridges a panel's noVNC to the Mac's Screen Sharing server. The service logs in to the server
- * itself (Apple's login), and shows the panel a server with no authentication, so noVNC needs no
- * Apple login. After ServerInit, bytes pass through both ways.
+ * Bridges a panel's noVNC to the Mac's Screen Sharing server. The caller has logged in to the
+ * server already (Apple's login), and the panel is shown a server with no authentication, so noVNC
+ * needs no Apple login. After ServerInit, bytes pass through both ways.
  *
- * `upstream` must be connected but not read from. Returns the handlers for the panel's messages.
+ * `upstream` must be logged in and waiting for ClientInit. Returns the handlers for the panel's messages.
  */
 export function bridgeToMac(
   upstream: Socket,
-  creds: Credentials,
   panel: PanelSide,
   options: ProxyOptions,
 ): { onMessage(data: Uint8Array): void; onClose(): void } {
@@ -160,13 +161,11 @@ export function bridgeToMac(
   const messages = new ClientMessages(toMac, request);
 
   const refuse = (reason: string) => {
-    // A failed handshake that noVNC shows: no security types, and the reason.
-    const text = Buffer.from(reason, "utf8");
-    const out = Buffer.alloc(5 + text.length);
-    out[0] = 0;
-    out.writeUInt32BE(text.length, 1);
-    text.copy(out, 5);
-    panel.send(out);
+    try {
+      panel.fail(reason);
+    } catch {
+      // The panel is gone.
+    }
   };
 
   upstream.on("data", (chunk) => {
@@ -174,24 +173,17 @@ export function bridgeToMac(
     else fromMac.push(chunk);
   });
   upstream.on("error", (err) => fromMac.fail(err));
+  upstream.resume(); // the caller left it paused after the login
   upstream.on("close", () => {
+    // The panel hears why before the stream ends, also when the Mac closes during the handshake.
+    if (!closed && !passing) refuse("the Mac closed the connection before the session started");
     fromMac.fail(new Error("the Mac closed the connection"));
     close();
   });
 
   void (async () => {
-    // Log in to the Mac while the panel says its version.
     panel.send(Buffer.from("RFB 003.008\n", "ascii"));
-    const login = appleLogin({ read: (n) => fromMac.read(n), write: toMac }, creds).then(
-      () => undefined,
-      (err: Error) => err,
-    );
     await fromPanel.read(12); // the panel's version
-    const failure = await login;
-    if (failure) {
-      refuse(failure.message);
-      return close();
-    }
     panel.send(Buffer.from([1, 1])); // one security type: None
     await fromPanel.read(1); // the panel picked it
     panel.send(Buffer.from([0, 0, 0, 0])); // SecurityResult: OK
@@ -207,13 +199,7 @@ export function bridgeToMac(
     const early = fromPanel.takeRest();
     if (early.length) messages.push(early);
   })().catch((err: Error) => {
-    if (!closed) {
-      try {
-        refuse(err.message);
-      } catch {
-        // The panel is gone.
-      }
-    }
+    if (!closed) refuse(err.message);
     close();
   });
 

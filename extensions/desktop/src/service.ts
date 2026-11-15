@@ -218,8 +218,9 @@ const linuxService: WorkerServiceDefinition = {
  * display to start or stop, and every worktree shares the one session.
  */
 const macService: WorkerServiceDefinition = {
-  onInit({ stateDir }) {
+  onInit({ stateDir, worker }) {
     setStateDir(stateDir);
+    mac.setWorker(worker);
     mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   },
 
@@ -278,9 +279,11 @@ const macService: WorkerServiceDefinition = {
     async openUrl(params) {
       const url = str(params, "url");
       if (!urlAllowed(url)) throw new Error("Only http, https, file, data and about:blank URLs are opened");
-      await mac.ensureUnlocked(mac.readCredentials()).catch((err) => {
+      try {
+        await mac.ensureUnlocked(mac.readCredentials());
+      } catch (err) {
         throw mac.explain(err);
-      });
+      }
       await mac.openUrl(url);
       return { ok: true };
     },
@@ -292,6 +295,8 @@ const macService: WorkerServiceDefinition = {
       mac.openStream(params.profile === "direct" ? "direct" : "hub", {
         send: (data) => stream.send(data),
         end: () => stream.end(),
+        notify: (message) => stream.send(JSON.stringify(message)),
+        fail: (message) => stream.send(JSON.stringify({ type: "error", message })),
       }),
   },
 };

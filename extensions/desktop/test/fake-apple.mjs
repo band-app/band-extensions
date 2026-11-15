@@ -19,8 +19,10 @@ const bytes = (n) => Buffer.from(n.toString(16).padStart(KEY_LEN * 2, "0"), "hex
 /**
  * A server that speaks the Mac's Screen Sharing handshake: security type 30, Diffie-Hellman, then
  * AES-128-ECB credentials it decrypts and checks. `sessions` lists the logins that got through.
+ * `dropAt: "login"` closes the socket after it read the credentials, without a status; `dropAt:
+ * "init"` closes it right after SecurityResult OK.
  */
-export async function fakeApple({ user, password, width = 8, height = 4, name = "fake mac" } = {}) {
+export async function fakeApple({ user, password, width = 8, height = 4, name = "fake mac", dropAt } = {}) {
   const sessions = [];
   const logins = [];
   const server = createServer((socket) => {
@@ -68,6 +70,7 @@ export async function fakeApple({ user, password, width = 8, height = 4, name = 
       const gotUser = cstr(plain.subarray(0, 64));
       const gotPassword = cstr(plain.subarray(64));
       logins.push({ user: gotUser, ok: gotUser === user && gotPassword === password });
+      if (dropAt === "login") return socket.destroy();
       if (gotUser !== user || gotPassword !== password) {
         const reason = Buffer.from("Authentication failed");
         const out = Buffer.alloc(8 + reason.length);
@@ -77,6 +80,7 @@ export async function fakeApple({ user, password, width = 8, height = 4, name = 
         socket.end(out);
         return;
       }
+      if (dropAt === "init") return socket.end(Buffer.from([0, 0, 0, 0]));
       socket.write(Buffer.from([0, 0, 0, 0]));
       session.clientInit = await read(1);
       const init = Buffer.alloc(24);
