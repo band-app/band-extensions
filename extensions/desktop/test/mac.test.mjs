@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { ByteReader, LoginRefusedError } from "../src/ard.ts";
 import { setStateDir } from "../src/config.ts";
-import { lockedIn, macUser, openStream, readCredentials, status } from "../src/macos.ts";
+import { loginSocket, lockedIn, macUser, openStream, readCredentials, setWorker, signOut, status } from "../src/macos.ts";
 import { bridgeToMac, ClientMessages } from "../src/proxy.ts";
 import { RfbClient } from "../src/rfb.ts";
 import { fakeApple } from "./fake-apple.mjs";
@@ -14,22 +14,52 @@ import { fakeApple } from "./fake-apple.mjs";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const user = macUser();
 
-/** A temp state dir with a config.json, and a password file when `password` is given. */
-function setup(password) {
+/** A temp state dir. A password file in it, named by the config, must be ignored. */
+function setup(passwordFile) {
   const dir = mkdtempSync(join(tmpdir(), "desktop-mac-"));
   const file = join(dir, "screen-password");
-  if (password !== undefined) writeFileSync(file, `${password}\n`, { mode: 0o600 });
-  writeFileSync(join(dir, "config.json"), JSON.stringify({ macos: { passwordFile: file } }));
+  if (passwordFile !== undefined) {
+    writeFileSync(file, `${passwordFile}\n`, { mode: 0o600 });
+    writeFileSync(join(dir, "config.json"), JSON.stringify({ macos: { passwordFile: file } }));
+  }
   setStateDir(dir);
+  signOut();
+  setWorker("w1");
   return { dir, file, done: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
-/** What noVNC is to the proxy: a place that receives bytes and ends. */
+/** What the panel is to the service: noVNC's bytes, and the text messages that go next to them. */
 function fakePanel() {
   const reader = new ByteReader();
-  const panel = { ended: false, reader, send: (d) => reader.push(d), end: () => (panel.ended = true) };
+  const panel = {
+    ended: false,
+    reader,
+    notices: [],
+    waiters: [],
+    send: (d) => reader.push(d),
+    end: () => (panel.ended = true),
+    notify(m) {
+      panel.notices.push(m);
+      for (const w of panel.waiters.splice(0)) w();
+    },
+    fail: (message) => panel.notify({ type: "error", message }),
+    /** The next notice of `type` (one that already came counts once). */
+    async next(type) {
+      for (let i = 0; i < 300; i++) {
+        const at = panel.notices.findIndex((m) => m.type === type);
+        if (at >= 0) return panel.notices.splice(at, 1)[0];
+        await new Promise((resolve) => {
+          panel.waiters.push(resolve);
+          setTimeout(resolve, 10);
+        });
+      }
+      throw new Error(`no ${type} message; got ${JSON.stringify(panel.notices)}`);
+    },
+  };
   return panel;
 }
+
+const answer = (handlers, password) => handlers.onMessage(JSON.stringify({ type: "password", password }));
 
 function connectTo(port) {
   return new Promise((resolve, reject) => {
@@ -78,7 +108,7 @@ test("S2: the proxy shows the panel a server with no login, then passes bytes bo
   const mac = await fakeApple({ user: "agent-test", password: "pw", width: 640, height: 480, name: "agent-test's Mac" });
   const panel = fakePanel();
   try {
-    const proxy = bridgeToMac(await connectTo(mac.port), { user: "agent-test", password: "pw" }, panel, { profile: "direct" });
+    const proxy = bridgeToMac(await loginSocket(mac.port, { user: "agent-test", password: "pw" }), panel, { profile: "direct" });
     await handshake(proxy, panel);
     const session = await mac.session();
     const init = await panel.reader.read(session.serverInit.length);
@@ -94,23 +124,6 @@ test("S2: the proxy shows the panel a server with no login, then passes bytes bo
     session.socket.write(toPanel);
     assert.deepEqual(await panel.reader.read(toPanel.length), toPanel);
     proxy.onClose();
-    assert.equal(panel.ended, true);
-  } finally {
-    mac.close();
-  }
-});
-
-test("S2: a refused login reaches the panel as the failure reason and the stream ends", async () => {
-  const mac = await fakeApple({ user: "agent-test", password: "pw" });
-  const panel = fakePanel();
-  try {
-    const proxy = bridgeToMac(await connectTo(mac.port), { user: "agent-test", password: "nope" }, panel, { profile: "hub" });
-    assert.equal((await panel.reader.read(12)).toString(), "RFB 003.008\n");
-    proxy.onMessage(Buffer.from("RFB 003.008\n"));
-    assert.equal((await panel.reader.read(1))[0], 0);
-    const len = (await panel.reader.read(4)).readUInt32BE(0);
-    assert.match((await panel.reader.read(len)).toString(), /refused the login for agent-test/);
-    await sleep(20);
     assert.equal(panel.ended, true);
   } finally {
     mac.close();
@@ -138,7 +151,7 @@ async function flood(profile) {
   const mac = await fakeApple({ user: "agent-test", password: "pw" });
   const panel = fakePanel();
   try {
-    const proxy = bridgeToMac(await connectTo(mac.port), { user: "agent-test", password: "pw" }, panel, { profile });
+    const proxy = bridgeToMac(await loginSocket(mac.port, { user: "agent-test", password: "pw" }), panel, { profile });
     await handshake(proxy, panel);
     const session = await mac.session();
     await panel.reader.read(session.serverInit.length);
@@ -185,41 +198,153 @@ test("ClientMessages cuts messages across chunks and streams a long ClientCutTex
   assert.deepEqual(Buffer.concat(forwarded), Buffer.concat([key(1, 65), cut, encodings, pointer(3)]));
 });
 
-test("S4: no password file names the file and what Screen Sharing needs", async () => {
+test("S1: with no password in memory the panel is asked; a wrong one is asked again with the reason; a right one connects", async () => {
+  const s = setup();
+  const mac = await fakeApple({ user, password: "right", width: 30, height: 20 });
+  const panel = fakePanel();
+  try {
+    const handlers = openStream("hub", panel, mac.port);
+    assert.deepEqual(await panel.next("need-password"), { type: "need-password", user, worker: "w1", reason: "" });
+    answer(handlers, "wrong");
+    const again = await panel.next("need-password");
+    assert.match(again.reason, /the Mac refused the login for .*Authentication failed/);
+    assert.ok(!JSON.stringify(panel.notices).includes("wrong"));
+    answer(handlers, "right");
+    await panel.next("signed-in");
+    await handshake(handlers, panel);
+    const session = await mac.session();
+    assert.deepEqual(await panel.reader.read(session.serverInit.length), session.serverInit);
+    assert.deepEqual(mac.logins.map((l) => l.ok), [false, true]);
+    handlers.onClose();
+  } finally {
+    mac.close();
+    s.done();
+  }
+});
+
+test("S1: a password in memory from an earlier sign-in connects without asking; a refusal clears it and asks", async () => {
+  const s = setup();
+  const mac = await fakeApple({ user, password: "right" });
+  try {
+    const first = fakePanel();
+    const h1 = openStream("hub", first, mac.port);
+    await first.next("need-password");
+    answer(h1, "right");
+    await first.next("signed-in");
+    h1.onClose();
+
+    const second = fakePanel();
+    const h2 = openStream("hub", second, mac.port);
+    await second.next("signed-in");
+    assert.equal(second.notices.some((m) => m.type === "need-password"), false);
+    h2.onClose();
+
+    // The Mac's password changed: the remembered one is refused.
+    mac.close();
+    const changed = await fakeApple({ user, password: "new" });
+    try {
+      const third = fakePanel();
+      const h3 = openStream("hub", third, changed.port);
+      const ask = await third.next("need-password");
+      assert.match(ask.reason, /refused the login/);
+      assert.throws(() => readCredentials(), /sign-in needed/);
+      h3.onClose();
+    } finally {
+      changed.close();
+    }
+  } finally {
+    mac.close();
+    s.done();
+  }
+});
+
+test("S3: tools and status say sign-in needed until a viewer signs in, then work", async () => {
+  const s = setup();
+  const mac = await fakeApple({ user, password: "right", width: 30, height: 20 });
+  try {
+    const message = `sign-in needed: open the Desktop tab on this worktree and sign in as ${user}`;
+    assert.throws(() => readCredentials(), (e) => e.message === message);
+    assert.equal((await status(mac.port)).error, message);
+    assert.equal(mac.logins.length, 0);
+
+    const panel = fakePanel();
+    const handlers = openStream("hub", panel, mac.port);
+    await panel.next("need-password");
+    answer(handlers, "right");
+    await panel.next("signed-in");
+    const st = await status(mac.port);
+    assert.equal(st.error, undefined);
+    assert.equal(st.width, 30);
+    handlers.onClose();
+  } finally {
+    mac.close();
+    s.done();
+  }
+});
+
+test("S4: a password file, named by the config or at the default place, is ignored", async () => {
+  const s = setup("right");
+  const mac = await fakeApple({ user, password: "right" });
+  try {
+    assert.throws(() => readCredentials(), /sign-in needed/);
+    assert.match(String((await status(mac.port)).error), /sign-in needed/);
+    assert.equal(mac.logins.length, 0);
+    const panel = fakePanel();
+    const handlers = openStream("hub", panel, mac.port);
+    await panel.next("need-password");
+    handlers.onClose();
+    assert.equal(mac.logins.length, 0);
+  } finally {
+    mac.close();
+    s.done();
+  }
+});
+
+test("S5: setup failures reach the panel as an error message with the reason", async () => {
   const s = setup();
   try {
-    assert.throws(() => readCredentials(), (e) => e.message.includes(s.file) && /Screen Sharing/.test(e.message));
-    const st = await status(1);
-    assert.match(String(st.error), new RegExp(s.file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-    assert.match(String(st.error), /Screen Sharing/);
     const panel = fakePanel();
-    const handlers = await openStream("hub", panel, 1);
-    assert.equal((await panel.reader.read(12)).toString(), "RFB 003.008\n");
-    handlers.onMessage(Buffer.from("RFB 003.008\n"));
-    assert.equal((await panel.reader.read(1))[0], 0);
-    const len = (await panel.reader.read(4)).readUInt32BE(0);
-    assert.match((await panel.reader.read(len)).toString(), /screen-password/);
+    const handlers = openStream("hub", panel, 1);
+    await panel.next("need-password");
+    answer(handlers, "right");
+    const failure = await panel.next("error");
+    assert.match(failure.message, /Screen Sharing is not answering/);
+    assert.ok(!failure.message.includes("right"));
+    await sleep(20);
     assert.equal(panel.ended, true);
   } finally {
     s.done();
   }
 });
 
-test("S4: a refused login shows the same message from status and the stream", async () => {
-  const s = setup("wrong");
-  const mac = await fakeApple({ user, password: "right" });
+test("S5: a Mac that closes the socket during the login is a refusal the panel hears about", async () => {
+  const s = setup();
+  const mac = await fakeApple({ user, password: "right", dropAt: "login" });
   try {
-    const st = await status(mac.port);
-    assert.match(String(st.error), /refused the login/);
-    assert.ok(String(st.error).includes(s.file));
-    assert.ok(!String(st.error).includes("wrong"));
     const panel = fakePanel();
-    const handlers = await openStream("hub", panel, mac.port);
-    assert.equal((await panel.reader.read(12)).toString(), "RFB 003.008\n");
-    handlers.onMessage(Buffer.from("RFB 003.008\n"));
-    assert.equal((await panel.reader.read(1))[0], 0);
-    const len = (await panel.reader.read(4)).readUInt32BE(0);
-    assert.match((await panel.reader.read(len)).toString(), /refused the login/);
+    const handlers = openStream("hub", panel, mac.port);
+    await panel.next("need-password");
+    answer(handlers, "right");
+    const again = await panel.next("need-password");
+    assert.match(again.reason, /closed the connection during the login/);
+    handlers.onClose();
+  } finally {
+    mac.close();
+    s.done();
+  }
+});
+
+test("S5: a Mac that closes right after the login reaches the panel as an error before the stream ends", async () => {
+  const s = setup();
+  const mac = await fakeApple({ user, password: "right", dropAt: "init" });
+  try {
+    const panel = fakePanel();
+    const handlers = openStream("hub", panel, mac.port);
+    await panel.next("need-password");
+    answer(handlers, "right");
+    await panel.next("signed-in");
+    const failure = await panel.next("error");
+    assert.match(failure.message, /the Mac closed the connection/);
     await sleep(20);
     assert.equal(panel.ended, true);
   } finally {
@@ -229,13 +354,18 @@ test("S4: a refused login shows the same message from status and the stream", as
 });
 
 test("status answers with the session size when the login works", async () => {
-  const s = setup("right");
+  const s = setup();
   const mac = await fakeApple({ user, password: "right", width: 30, height: 20 });
   try {
+    const panel = fakePanel();
+    const handlers = openStream("hub", panel, mac.port);
+    await panel.next("need-password");
+    answer(handlers, "right");
+    await panel.next("signed-in");
     const st = await status(mac.port);
     assert.equal(st.width, 30);
     assert.equal(st.height, 20);
-    assert.equal(st.error, undefined);
+    handlers.onClose();
   } finally {
     mac.close();
     s.done();
