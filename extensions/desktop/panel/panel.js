@@ -345,10 +345,16 @@ function onServiceMessage(text) {
   }
 }
 
-$("login-form").addEventListener("submit", (event) => {
-  event.preventDefault();
+// Band frames the panel with sandbox="allow-scripts" and no allow-forms, so the browser drops a
+// form submission before any submit event fires. Connect and Enter call this directly instead.
+function submitLogin() {
   const password = $("login-password").value;
-  if (password === "" || !login) return;
+  if (!login) return;
+  if (password === "") {
+    // `required` showed a validation bubble here; the sandbox cannot, so put the cursor back in the field.
+    $("login-password").focus();
+    return;
+  }
   if (!streamOpen) {
     // The password cannot reach the service: say so instead of closing the form on nothing.
     hideLogin();
@@ -361,6 +367,14 @@ $("login-form").addEventListener("submit", (event) => {
   hideLogin();
   setPhase("connecting", "Signing in");
   sendPassword(password);
+}
+
+$("login-submit").addEventListener("click", submitLogin);
+$("login-password").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.isComposing) {
+    event.preventDefault();
+    submitLogin();
+  }
 });
 
 function closeStream() {
