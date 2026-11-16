@@ -50,11 +50,12 @@ window.opens = 0;
 let streamId = "";
 const ch = new MessageChannel();
 window.service = (obj) => ch.port1.postMessage({ type: "stream.message", id: streamId, text: JSON.stringify(obj) });
+window.control = (enabled) => ch.port1.postMessage({ type: "control", enabled });
 window.closeStream = (reason) => ch.port1.postMessage({ type: "stream.closed", id: streamId, code: 1000, reason });
 ch.port1.onmessage = (e) => {
   const m = e.data;
   window.log.push(m);
-  if (m.type === "stream.open") { window.opens++; streamId = m.id; ch.port1.postMessage({ type: "stream.opened", id: m.id }); }
+  if (m.type === "stream.open") { window.opens++; streamId = m.id; if (!q.get("noopen")) ch.port1.postMessage({ type: "stream.opened", id: m.id }); }
   else if (m.type === "secret.get") ch.port1.postMessage({ type: "secret.result", id: m.id, value: secrets.get(m.key) ?? null });
   else if (m.type === "secret.set") { secrets.set(m.key, m.value); ch.port1.postMessage({ type: "secret.result", id: m.id, value: null }); }
   else if (m.type === "secret.delete") { secrets.delete(m.key); ch.port1.postMessage({ type: "secret.result", id: m.id, value: null }); }
@@ -186,5 +187,89 @@ test("S5: an error from the service shows as it is and the panel does not reconn
   await frame.getByTestId("desktop-panel__reconnect").waitFor({ state: "visible" });
   await page.waitForTimeout(1500);
   assert.equal(await page.evaluate(() => window.opens), 1);
+  await page.close();
+});
+
+// A paste event the panel's document listener sees. noVNC ignores clipboardPasteFrom until it is
+// connected, so the test reads whether the listener took the event (it calls preventDefault) to tell
+// "sent to the remote desktop" from "left to the page".
+const pasteInto = (frame, selector, text) =>
+  frame.locator(selector).evaluate((el, value) => {
+    const data = new DataTransfer();
+    data.setData("text/plain", value);
+    const event = new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true });
+    el.dispatchEvent(event);
+    return event.defaultPrevented;
+  }, text);
+
+async function openWithControl() {
+  const ctx = await open("");
+  await ctx.page.waitForFunction(() => window.opens === 1);
+  await ctx.page.evaluate(() => window.service({ type: "signed-in" }));
+  await ctx.page.evaluate(() => window.control(true));
+  return ctx;
+}
+
+test("S1: a paste into the sign-in password field is left to the field even with control on", { skip }, async () => {
+  const { page, frame } = await open("");
+  await page.waitForFunction(() => window.opens === 1);
+  await page.evaluate(() => window.service({ type: "need-password", user: "agent", worker: "w1", reason: "" }));
+  await frame.getByTestId("desktop-panel__login").waitFor({ state: "visible" });
+  await page.evaluate(() => window.control(true));
+  assert.equal(await pasteInto(frame, "#login-password", "s3cret"), false);
+  await page.close();
+});
+
+test("S2: a paste on the live desktop with control goes to the remote desktop", { skip }, async () => {
+  const { page, frame } = await openWithControl();
+  assert.equal(await pasteInto(frame, "body", "hello"), true);
+  await page.close();
+});
+
+test("S3: a paste into any other input or textarea is never redirected", { skip }, async () => {
+  const { page, frame } = await openWithControl();
+  await frame.locator("body").evaluate((body) => {
+    for (const tag of ["input", "textarea"]) {
+      const el = document.createElement(tag);
+      el.id = `extra-${tag}`;
+      body.append(el);
+    }
+  });
+  assert.equal(await pasteInto(frame, "#extra-input", "x"), false);
+  assert.equal(await pasteInto(frame, "#extra-textarea", "x"), false);
+  await page.close();
+});
+
+test("S5: a password typed while the stream is not open is not lost silently", { skip }, async () => {
+  const { page, frame } = await open("?noopen=1");
+  await page.waitForFunction(() => window.opens === 1);
+  await page.evaluate(() => window.service({ type: "need-password", user: "agent", worker: "w1", reason: "" }));
+  await frame.getByTestId("desktop-panel__login").waitFor({ state: "visible" });
+  await frame.getByTestId("desktop-panel__login-password").fill("right");
+  await frame.getByTestId("desktop-panel__login-submit").click();
+  const error = frame.getByTestId("desktop-panel__error");
+  await error.waitFor({ state: "visible" });
+  assert.match(await error.innerText(), /password was not sent.*Reconnect/);
+  await frame.getByTestId("desktop-panel__reconnect").waitFor({ state: "visible" });
+  assert.deepEqual(passwordsSent(await page.evaluate(() => window.log)), []);
+  await page.close();
+});
+
+test("S6: a stream that drops while signing in comes back with a reason on the form", { skip }, async () => {
+  const { page, frame } = await open("");
+  await page.waitForFunction(() => window.opens === 1);
+  await page.evaluate(() => window.service({ type: "need-password", user: "agent", worker: "w1", reason: "" }));
+  await frame.getByTestId("desktop-panel__login").waitFor({ state: "visible" });
+  await frame.getByTestId("desktop-panel__login-password").fill("right");
+  await frame.getByTestId("desktop-panel__login-submit").click();
+  await page.waitForFunction(() => window.log.some((m) => m.type === "stream.send"));
+  await page.evaluate(() => window.closeStream(""));
+  await frame.getByTestId("desktop-panel__error").waitFor({ state: "visible" });
+  assert.match(await frame.getByTestId("desktop-panel__error").innerText(), /ended while signing in/);
+  await page.waitForFunction(() => window.opens === 2, null, { timeout: 15000 });
+  await page.evaluate(() => window.service({ type: "need-password", user: "agent", worker: "w1", reason: "" }));
+  const reason = frame.getByTestId("desktop-panel__login-reason");
+  await reason.waitFor({ state: "visible" });
+  assert.match(await reason.innerText(), /ended while signing in/);
   await page.close();
 });

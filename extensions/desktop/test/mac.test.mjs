@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { ByteReader, LoginRefusedError } from "../src/ard.ts";
 import { setStateDir } from "../src/config.ts";
-import { loginSocket, lockedIn, macUser, openStream, readCredentials, setWorker, signOut, status } from "../src/macos.ts";
+import { limits, loginSocket, lockedIn, macUser, openStream, readCredentials, setLogger, setWorker, signOut, status } from "../src/macos.ts";
 import { bridgeToMac, ClientMessages } from "../src/proxy.ts";
 import { RfbClient } from "../src/rfb.ts";
 import { fakeApple } from "./fake-apple.mjs";
@@ -381,4 +381,50 @@ test("lockedIn reads the user's own entry of IOConsoleUsers", () => {
   assert.equal(lockedIn(users, "someone"), true);
   assert.equal(lockedIn(users, "nobody"), false);
   assert.equal(lockedIn(null, "agent-test"), false);
+});
+
+test("S6: a login that never answers ends with a message and a log line, not silence", async () => {
+  const s = setup();
+  const net = await import("node:net");
+  const held = [];
+  const silent = net.createServer((c) => held.push(c));
+  await new Promise((r) => silent.listen(0, "127.0.0.1", r));
+  const logged = [];
+  setLogger((m) => logged.push(m));
+  limits.loginMs = 200;
+  const panel = fakePanel();
+  try {
+    const handlers = openStream("hub", panel, silent.address().port);
+    await panel.next("need-password");
+    answer(handlers, "right");
+    const err = await panel.next("error");
+    assert.match(err.message, /the Mac login did not finish within/);
+    assert.ok(logged.some((m) => /sign-in failed: .*the Mac login did not finish/.test(m)));
+    assert.ok(!JSON.stringify(logged).includes("right"));
+  } finally {
+    limits.loginMs = 20_000;
+    for (const c of held) c.destroy();
+    silent.close();
+    s.done();
+  }
+});
+
+test("S6: a refused login is logged without the password", async () => {
+  const s = setup();
+  const mac = await fakeApple({ user, password: "right" });
+  const logged = [];
+  setLogger((m) => logged.push(m));
+  const panel = fakePanel();
+  try {
+    const handlers = openStream("hub", panel, mac.port);
+    await panel.next("need-password");
+    answer(handlers, "wrong");
+    await panel.next("need-password");
+    assert.ok(logged.some((m) => /sign-in refused: the Mac refused the login/.test(m)));
+    assert.ok(!JSON.stringify(logged).includes("wrong"));
+    handlers.onClose();
+  } finally {
+    mac.close();
+    s.done();
+  }
 });

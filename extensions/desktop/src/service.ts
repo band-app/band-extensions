@@ -221,6 +221,7 @@ const macService: WorkerServiceDefinition = {
   onInit({ stateDir, worker }) {
     setStateDir(stateDir);
     mac.setWorker(worker);
+    mac.setLogger(log);
     mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   },
 
