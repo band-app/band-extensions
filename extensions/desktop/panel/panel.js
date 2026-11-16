@@ -349,7 +349,12 @@ function onServiceMessage(text) {
 // form submission before any submit event fires. Connect and Enter call this directly instead.
 function submitLogin() {
   const password = $("login-password").value;
-  if (password === "" || !login) return;
+  if (!login) return;
+  if (password === "") {
+    // `required` showed a validation bubble here; the sandbox cannot, so put the cursor back in the field.
+    $("login-password").focus();
+    return;
+  }
   if (!streamOpen) {
     // The password cannot reach the service: say so instead of closing the form on nothing.
     hideLogin();
