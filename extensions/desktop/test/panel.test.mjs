@@ -42,7 +42,7 @@ try {
 const executablePath = findChromium();
 const skip = !chromium || !executablePath ? "playwright-core or a Chromium is not available" : false;
 
-const HOST = `<!doctype html><body style="margin:0"><iframe id="f" src="panel.html" style="width:900px;height:600px;border:0"></iframe><script>
+const HOST = `<!doctype html><body style="margin:0"><iframe id="f" src="panel.html" sandbox="allow-scripts" style="width:900px;height:600px;border:0"></iframe><script>
 const q = new URLSearchParams(location.search);
 const secrets = new Map(q.get("saved") ? [["mac:w1:agent", q.get("saved")]] : []);
 window.log = [];
@@ -77,10 +77,12 @@ before(async () => {
   execFileSync(process.execPath, [join(root, "build.mjs")], { cwd: root, stdio: "ignore" });
   server = createServer((req, res) => {
     const path = new URL(req.url, "http://x").pathname;
+    // Band serves panel files with this header; the sandboxed frame's opaque origin needs it for panel.js.
+    const cors = { "access-control-allow-origin": "*" };
     if (path === "/host.html") return res.writeHead(200, { "content-type": "text/html" }).end(HOST);
     try {
       const body = readFileSync(join(web, path.slice(1)));
-      res.writeHead(200, { "content-type": path.endsWith(".js") ? "text/javascript" : "text/html" }).end(body);
+      res.writeHead(200, { ...cors, "content-type": path.endsWith(".js") ? "text/javascript" : "text/html" }).end(body);
     } catch {
       res.writeHead(404).end();
     }
@@ -209,6 +211,19 @@ async function openWithControl() {
   await ctx.page.evaluate(() => window.control(true));
   return ctx;
 }
+
+test("S8: Enter in the password field sends the password inside Band's sandboxed frame", { skip }, async () => {
+  const { page, frame, log } = await open("");
+  await page.waitForFunction(() => window.opens === 1);
+  await page.evaluate(() => window.service({ type: "need-password", user: "agent", worker: "w1", reason: "" }));
+  const form = frame.getByTestId("desktop-panel__login");
+  await form.waitFor({ state: "visible" });
+  await frame.getByTestId("desktop-panel__login-password").fill("by-enter");
+  await frame.getByTestId("desktop-panel__login-password").press("Enter");
+  await form.waitFor({ state: "hidden" });
+  assert.deepEqual(passwordsSent(await log()), ["by-enter"]);
+  await page.close();
+});
 
 test("S1: a paste into the sign-in password field is left to the field even with control on", { skip }, async () => {
   const { page, frame } = await open("");
