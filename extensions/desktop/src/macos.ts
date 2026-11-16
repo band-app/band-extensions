@@ -13,6 +13,24 @@ const OPEN = "/usr/bin/open";
 /** After a failed unlock, the next attempt waits this long, so a lock screen it cannot pass is not retried in a loop. */
 const UNLOCK_RETRY_MS = 60_000;
 
+/** How long a sign-in step may take before the panel is told. Tests shorten them. */
+export const limits = { unlockMs: 45_000, loginMs: 20_000 };
+
+let logger: (message: string) => void = () => {};
+
+/** Where sign-in failures are written, so they reach the worker log. */
+export function setLogger(fn: (message: string) => void): void {
+  logger = fn;
+}
+
+function within<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: NodeJS.Timeout;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} did not finish within ${Math.round(ms / 1000)} seconds`)), ms);
+  });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+}
+
 /** An error whose message goes to the person or the agent as it is. */
 export class MacError extends Error {}
 
@@ -287,8 +305,8 @@ export function openStream(
       }
       const creds = { user: macUser(), password };
       try {
-        await ensureUnlocked(creds, port);
-        const socket = await loginSocket(port, creds);
+        await within(ensureUnlocked(creds, port), limits.unlockMs, "unlocking the Mac session");
+        const socket = await within(loginSocket(port, creds), limits.loginMs, "the Mac login");
         if (closed) {
           socket.destroy();
           return;
@@ -309,17 +327,22 @@ export function openStream(
         if (closed) return;
         if (err instanceof LoginRefusedError) {
           signedIn = null;
-          reason = err.message;
+          reason = err.message || `the Mac refused the login for ${macUser()}`;
+          logger(`sign-in refused: ${reason}`);
           continue;
         }
-        panel.fail(explain(err).message);
+        const message = explain(err).message;
+        logger(`sign-in failed: ${message}`);
+        panel.fail(message);
         panel.end();
         return;
       }
     }
   })().catch((err) => {
     if (closed) return;
-    panel.fail(explain(err).message);
+    const message = explain(err).message;
+    logger(`sign-in failed: ${message}`);
+    panel.fail(message);
     panel.end();
   });
 

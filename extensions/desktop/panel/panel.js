@@ -40,6 +40,13 @@ let serviceError = "";
 let formOpen = false;
 let savedTried = false;
 let login = null;
+// A password was sent and the service has not answered yet; the timer ends a wait that never does.
+let signingIn = false;
+let signInTimer = null;
+// Longer than the service's own limits (45 s unlock + 20 s login), so its message wins.
+const SIGN_IN_TIMEOUT_MS = 90_000;
+// Why the last sign-in did not finish, shown on the form the next stream asks with.
+let carriedReason = "";
 
 /**
  * The object noVNC drives in place of a WebSocket: it has the properties noVNC checks for and
@@ -245,6 +252,27 @@ function sendToService(message) {
   if (port && streamId && streamOpen) port.postMessage({ type: "stream.send", id: streamId, message: JSON.stringify(message) });
 }
 
+function endSignIn() {
+  signingIn = false;
+  clearTimeout(signInTimer);
+  signInTimer = null;
+}
+
+/** Sends the password and starts waiting for the service's answer. */
+function sendPassword(password) {
+  signingIn = true;
+  clearTimeout(signInTimer);
+  signInTimer = setTimeout(() => {
+    if (!signingIn) return;
+    carriedReason = "the Mac did not answer the sign-in within 90 seconds. Check that Screen Sharing is on, then enter the password again";
+    endSignIn();
+    closeStream();
+    retries = 0;
+    openStream();
+  }, SIGN_IN_TIMEOUT_MS);
+  sendToService({ type: "password", password });
+}
+
 function hideLogin() {
   formOpen = false;
   $("login").hidden = true;
@@ -267,7 +295,10 @@ function showLogin(user, reason) {
 async function onNeedPassword(m) {
   const id = streamId;
   const user = typeof m.user === "string" ? m.user : "";
-  const reason = typeof m.reason === "string" ? m.reason : "";
+  endSignIn();
+  const refused = typeof m.reason === "string" ? m.reason : "";
+  const reason = refused || carriedReason;
+  carriedReason = "";
   const key = `mac:${typeof m.worker === "string" && m.worker ? m.worker : "worker"}:${user}`.slice(0, 200);
   login = { key, user, save: null };
   if (!reason && !savedTried && secretsMode === "keychain") {
@@ -277,7 +308,7 @@ async function onNeedPassword(m) {
       if (id !== streamId) return;
       if (saved) {
         setPhase("connecting", "Signing in");
-        sendToService({ type: "password", password: saved });
+        sendPassword(saved);
         return;
       }
     } catch {
@@ -285,7 +316,7 @@ async function onNeedPassword(m) {
       if (id !== streamId) return;
     }
   }
-  if (reason && secretsMode === "keychain") secretCall("secret.delete", key).catch(() => undefined);
+  if (refused && secretsMode === "keychain") secretCall("secret.delete", key).catch(() => undefined);
   showLogin(user, reason);
 }
 
@@ -299,12 +330,15 @@ function onServiceMessage(text) {
   if (!m || typeof m !== "object") return;
   if (m.type === "need-password") void onNeedPassword(m);
   else if (m.type === "signed-in") {
+    endSignIn();
+    carriedReason = "";
     hideLogin();
     setPhase("connecting");
     const save = login?.save;
     if (save) secretCall("secret.set", save.key, save.password).catch(() => undefined);
     if (login) login.save = null;
   } else if (m.type === "error" && typeof m.message === "string") {
+    endSignIn();
     serviceError = m.message;
     hideLogin();
     showError(m.message);
@@ -315,10 +349,18 @@ $("login-form").addEventListener("submit", (event) => {
   event.preventDefault();
   const password = $("login-password").value;
   if (password === "" || !login) return;
+  if (!streamOpen) {
+    // The password cannot reach the service: say so instead of closing the form on nothing.
+    hideLogin();
+    setPhase("closed");
+    showError("The connection to the desktop is closed, so the password was not sent. Press Reconnect, then sign in again.");
+    $("reconnect").hidden = false;
+    return;
+  }
   login.save = secretsMode === "keychain" && $("login-remember").checked ? { key: login.key, password } : null;
   hideLogin();
   setPhase("connecting", "Signing in");
-  sendToService({ type: "password", password });
+  sendPassword(password);
 });
 
 function closeStream() {
@@ -331,12 +373,18 @@ function closeStream() {
 
 function onClosed(code, reason) {
   streamOpen = false;
+  const interrupted = signingIn || formOpen;
+  const during = signingIn;
+  endSignIn();
   teardownRfb();
   hideLogin();
   setPhase("closed");
   // The service's own reason beats the hub's generic one, and retrying cannot fix it.
-  const why = serviceError || reason;
+  let why = serviceError || reason;
+  if (!why && during) why = "The connection to the desktop ended while signing in. Enter the password again.";
   if (why) showError(why);
+  // The next stream asks again from the start; tell the person why.
+  if (interrupted && !serviceError) carriedReason = why || "the connection to the desktop ended before you signed in";
   const delay = RECONNECT_DELAYS_MS[retries];
   if (!serviceError && !FINAL_CLOSE_CODES.has(code) && delay !== undefined) {
     retries += 1;
@@ -455,9 +503,12 @@ $("reconnect").addEventListener("click", () => {
   if (port) openStream();
 });
 
-// The clipboard goes to the desktop only in control mode.
+// The clipboard goes to the desktop only in control mode, and never when the paste is meant for a
+// field of the panel itself (the sign-in password).
 document.addEventListener("paste", (event) => {
-  if (!control || !rfb) return;
+  if (!control || !rfb || formOpen) return;
+  const target = event.target;
+  if (target instanceof HTMLElement && target.closest("input, textarea, select, [contenteditable]")) return;
   const text = event.clipboardData?.getData("text/plain");
   if (text) {
     event.preventDefault();
