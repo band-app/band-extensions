@@ -192,11 +192,48 @@ function teardownRfb() {
   $("resolution").textContent = "no signal";
 }
 
+// macOS Screen Sharing sends no cursor image, and noVNC hides the local pointer until it gets one.
+// With showDotCursor on, noVNC draws RFB.cursors.dot instead when the server's cursor is empty, so
+// the dot is replaced by an arrow whose hotspot is its tip. A cursor the server does send still wins.
+// "#" is the black outline, "." the white fill.
+const ARROW = [
+  "#           ",
+  "##          ",
+  "#.#         ",
+  "#..#        ",
+  "#...#       ",
+  "#....#      ",
+  "#.....#     ",
+  "#......#    ",
+  "#.......#   ",
+  "#........#  ",
+  "#.....#####",
+  "#..#..#     ",
+  "#.# #..#    ",
+  "##  #..#    ",
+  "#    #..#   ",
+  "     #..#   ",
+  "      ##    ",
+];
+const ARROW_W = 12;
+RFB.cursors.dot = {
+  rgbaPixels: new Uint8Array(
+    ARROW.flatMap((row) =>
+      [...row.padEnd(ARROW_W)].flatMap((c) => (c === "#" ? [0, 0, 0, 255] : c === "." ? [255, 255, 255, 255] : [0, 0, 0, 0])),
+    ),
+  ),
+  w: ARROW_W,
+  h: ARROW.length,
+  hotx: 0,
+  hoty: 0,
+};
+
 function startRfb() {
   teardownRfb();
   channel = new PortChannel(streamId);
   rfb = new RFB(screen, channel, { shared: true });
   rfb.background = "transparent";
+  rfb.showDotCursor = true;
   rfb.addEventListener("connect", () => {
     retries = 0;
     setPhase("live");

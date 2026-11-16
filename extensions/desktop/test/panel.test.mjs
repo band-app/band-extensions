@@ -212,6 +212,16 @@ async function openWithControl() {
   return ctx;
 }
 
+const canvasCursor = (frame) => frame.locator("canvas").evaluate((c) => c.style.cursor);
+
+test("S1: with no cursor from the server the pointer over the screen is the arrow, not none", { skip }, async () => {
+  const { page, frame } = await openWithControl();
+  const cursor = await canvasCursor(frame);
+  assert.match(cursor, /^url\("?data:image\/png/);
+  assert.match(cursor, /, default$/);
+  await page.close();
+});
+
 test("S8: Enter in the password field sends the password inside Band's sandboxed frame", { skip }, async () => {
   const { page, frame, log } = await open("");
   await page.waitForFunction(() => window.opens === 1);
