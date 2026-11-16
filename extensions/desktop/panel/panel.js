@@ -345,8 +345,9 @@ function onServiceMessage(text) {
   }
 }
 
-$("login-form").addEventListener("submit", (event) => {
-  event.preventDefault();
+// Band frames the panel with sandbox="allow-scripts" and no allow-forms, so the browser drops a
+// form submission before any submit event fires. Connect and Enter call this directly instead.
+function submitLogin() {
   const password = $("login-password").value;
   if (password === "" || !login) return;
   if (!streamOpen) {
@@ -361,6 +362,14 @@ $("login-form").addEventListener("submit", (event) => {
   hideLogin();
   setPhase("connecting", "Signing in");
   sendPassword(password);
+}
+
+$("login-submit").addEventListener("click", submitLogin);
+$("login-password").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.isComposing) {
+    event.preventDefault();
+    submitLogin();
+  }
 });
 
 function closeStream() {
